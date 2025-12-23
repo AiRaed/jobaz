@@ -4,64 +4,131 @@ export const dynamic = 'force-dynamic'
 
 export async function GET(req: NextRequest) {
   try {
-    const apiKey = process.env.REED_API_KEY
-    const base = process.env.REED_API_BASE || 'https://www.reed.co.uk/api/1.0'
-
-    if (!apiKey) {
-      return NextResponse.json(
-        { error: 'Missing Reed API config' },
-        { status: 500 }
-      )
-    }
-
     // Get job ID from query parameters
     const searchParams = req.nextUrl.searchParams
-    const jobId = searchParams.get('id')
+    const rawId = searchParams.get('id')?.trim()
 
-    if (!jobId) {
+    if (!rawId) {
       return NextResponse.json(
-        { error: 'Job ID is required' },
+        { error: 'Missing id' },
         { status: 400 }
       )
     }
 
-    // Build the Reed API URL for job details
-    const url = `${base}/jobs/${jobId}`
+    // Provider detection must happen before stripping prefixes
+    const isAdzuna = rawId.startsWith('adzuna_')
+    const isReed = rawId.startsWith('reed_')
 
-    // Make request to Reed API with Basic Auth
-    // Reed API uses API KEY ONLY (no username/password, no colon)
-    const response = await fetch(url, {
-      headers: {
-        Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
-      },
-    })
+    // Only after provider detection, strip the prefix
+    const cleanId = rawId.replace(/^adzuna_/, '').replace(/^reed_/, '')
 
-    if (!response.ok) {
-      if (response.status === 404) {
+    // Route to appropriate provider
+    if (isAdzuna) {
+      // Fetch from Adzuna API
+      const appId = process.env.ADZUNA_APP_ID
+      const appKey = process.env.ADZUNA_APP_KEY
+      const apiBase = process.env.ADZUNA_API_BASE || 'https://api.adzuna.com/v1/api'
+
+      if (!appId || !appKey) {
         return NextResponse.json(
-          { error: 'Reed job not found', jobId },
-          { status: 404 }
+          { error: 'Missing Adzuna API config' },
+          { status: 500 }
         )
       }
-      if (response.status === 400) {
-        const errorText = await response.text().catch(() => 'Bad Request')
-        console.error('Reed API 400 error:', errorText)
+
+      // Adzuna Job Details endpoint: /jobs/gb/{jobId}.json
+      // IMPORTANT: The .json suffix is REQUIRED
+      const url = new URL(`${apiBase}/jobs/gb/${cleanId}.json`)
+      url.searchParams.set('app_id', appId)
+      url.searchParams.set('app_key', appKey)
+
+      const response = await fetch(url.toString(), {
+        method: 'GET',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      })
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return NextResponse.json(
+            { error: 'Adzuna job not found', jobId: rawId },
+            { status: 404 }
+          )
+        }
+        if (response.status === 400) {
+          const errorText = await response.text().catch(() => 'Bad Request')
+          console.error('Adzuna API 400 error:', errorText)
+          return NextResponse.json(
+            { error: 'Adzuna API error: Bad Request', details: errorText },
+            { status: 400 }
+          )
+        }
+        const errorText = await response.text().catch(() => response.statusText)
+        console.error('Adzuna API error:', response.status, errorText)
         return NextResponse.json(
-          { error: 'Reed API error: Bad Request', details: errorText },
-          { status: 400 }
+          { error: 'Adzuna API error', details: errorText },
+          { status: response.status }
         )
       }
-      const errorText = await response.text().catch(() => response.statusText)
-      console.error('Reed API error:', response.status, errorText)
+
+      const job = await response.json()
+      return NextResponse.json({ job }, { status: 200 })
+    } else if (isReed) {
+      // Fetch from Reed API
+      const apiKey = process.env.REED_API_KEY
+      const base = process.env.REED_API_BASE || 'https://www.reed.co.uk/api/1.0'
+
+      if (!apiKey) {
+        return NextResponse.json(
+          { error: 'Missing Reed API config' },
+          { status: 500 }
+        )
+      }
+
+      // Build the Reed API URL for job details
+      const url = `${base}/jobs/${cleanId}`
+
+      // Make request to Reed API with Basic Auth
+      // Reed API uses API KEY ONLY (no username/password, no colon)
+      const response = await fetch(url, {
+        headers: {
+          Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
+        },
+      })
+
+      if (!response.ok) {
+        if (response.status === 404) {
+          return NextResponse.json(
+            { error: 'Reed job not found', jobId: rawId },
+            { status: 404 }
+          )
+        }
+        if (response.status === 400) {
+          const errorText = await response.text().catch(() => 'Bad Request')
+          console.error('Reed API 400 error:', errorText)
+          return NextResponse.json(
+            { error: 'Reed API error: Bad Request', details: errorText },
+            { status: 400 }
+          )
+        }
+        const errorText = await response.text().catch(() => response.statusText)
+        console.error('Reed API error:', response.status, errorText)
+        return NextResponse.json(
+          { error: 'Reed API error', details: errorText },
+          { status: response.status }
+        )
+      }
+
+      const job = await response.json()
+      return NextResponse.json({ job }, { status: 200 })
+    } else {
+      // Unknown provider prefix
       return NextResponse.json(
-        { error: 'Reed API error', details: errorText },
-        { status: response.status }
+        { error: 'Unknown job source. Expected id to start with adzuna_ or reed_.' },
+        { status: 400 }
       )
     }
-
-    const job = await response.json()
-
-    return NextResponse.json({ job }, { status: 200 })
   } catch (error) {
     console.error('Error in jobs/details route:', error)
     return NextResponse.json(
