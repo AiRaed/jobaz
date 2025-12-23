@@ -12,24 +12,23 @@ export async function exportToPDF(elementId: string, filename: string) {
     }
   })
   
-  // Find the .a4-paper container first (this has the proper padding/margins)
-  let element: HTMLElement | null = document.querySelector('.a4-paper') as HTMLElement
+  // Find the element by ID first (for cv-builder-v2, this is 'cv-preview-v2')
+  let element: HTMLElement | null = document.getElementById(elementId) as HTMLElement
   
-  // If not found, try finding by ID
-  if (!element) {
-    const idElement = document.getElementById(elementId)
-    if (idElement) {
-      // Check if it's inside an .a4-paper container
-      const paperContainer = idElement.closest('.a4-paper') as HTMLElement
-      if (paperContainer) {
-        element = paperContainer
-      } else {
-        element = idElement
-      }
+  // If found by ID, check if it's inside an .a4-paper container
+  if (element) {
+    const paperContainer = element.closest('.a4-paper') as HTMLElement
+    if (paperContainer) {
+      element = paperContainer
     }
   }
   
-  // Last resort: try finding .cv-page
+  // If not found, try finding .a4-paper container
+  if (!element) {
+    element = document.querySelector('.a4-paper') as HTMLElement
+  }
+  
+  // Last resort: try finding .cv-page or .cv-preview-miniature
   if (!element) {
     const cvPage = document.querySelector('.cv-page') as HTMLElement
     if (cvPage) {
@@ -38,6 +37,12 @@ export async function exportToPDF(elementId: string, filename: string) {
         element = paperContainer
       } else {
         element = cvPage
+      }
+    } else {
+      // Try finding cv-preview-miniature (used in cv-builder-v2)
+      const previewMiniature = document.querySelector('.cv-preview-miniature') as HTMLElement
+      if (previewMiniature) {
+        element = previewMiniature
       }
     }
   }
@@ -70,15 +75,59 @@ export async function exportToPDF(elementId: string, filename: string) {
     }
   })
 
-  // Store original padding/margin for restoration (PDF export should use html2pdf margins, not CSS padding)
+  // Store original styles for restoration
   const originalPadding = element.style.padding
   const originalMargin = element.style.margin
   const originalMinHeight = element.style.minHeight
+  const originalTransform = element.style.transform
+  const originalPosition = element.style.position
+  const originalWidth = element.style.width
+  const originalHeight = element.style.height
+  const originalTop = element.style.top
+  const originalLeft = element.style.left
+  const originalOverflow = element.style.overflow
+  
+  // Temporarily remove transform scale and position absolute for PDF export
+  // This ensures html2canvas can properly capture the text
+  element.style.transform = 'none'
+  element.style.position = 'relative'
+  element.style.width = 'auto'
+  element.style.height = 'auto'
+  element.style.top = 'auto'
+  element.style.left = 'auto'
+  element.style.overflow = 'visible'
   
   // Temporarily remove padding/margin for PDF export - html2pdf will handle margins
   element.style.padding = '0'
   element.style.margin = '0'
   element.style.minHeight = 'auto'
+  
+  // Force all text to be visible and black for PDF export
+  const allTextElements = element.querySelectorAll('*')
+  const originalTextColors: Map<HTMLElement, string> = new Map()
+  allTextElements.forEach((el) => {
+    if (el instanceof HTMLElement) {
+      const computedStyle = window.getComputedStyle(el)
+      const color = computedStyle.color
+      originalTextColors.set(el, color)
+      // Ensure text is visible - if it's too light, make it darker
+      if (color && (color === 'rgba(0, 0, 0, 0)' || color === 'transparent' || color.includes('255, 255, 255'))) {
+        el.style.color = '#000000'
+      } else if (color && !color.includes('0, 0, 0') && !color.includes('26, 26, 26') && !color.includes('74, 74, 74')) {
+        // If text is not black or dark gray, ensure it's at least dark enough to be visible
+        const rgbMatch = color.match(/\d+/g)
+        if (rgbMatch && rgbMatch.length >= 3) {
+          const r = parseInt(rgbMatch[0])
+          const g = parseInt(rgbMatch[1])
+          const b = parseInt(rgbMatch[2])
+          // If text is too light (close to white), make it darker
+          if (r > 200 && g > 200 && b > 200) {
+            el.style.color = '#1a1a1a'
+          }
+        }
+      }
+    }
+  })
 
   const opt = {
     margin: [18, 20, 18, 20], // top, right, bottom, left in mm
@@ -93,8 +142,68 @@ export async function exportToPDF(elementId: string, filename: string) {
       removeContainer: false,
       printColorAdjust: 'exact',
       allowTaint: false,
-      windowWidth: element.scrollWidth,
-      windowHeight: element.scrollHeight,
+      windowWidth: element.scrollWidth || A4_WIDTH_PX,
+      windowHeight: element.scrollHeight || A4_HEIGHT_PX,
+      onclone: (clonedDoc: Document) => {
+        // Ensure all text is visible in the cloned document
+        const clonedElement = clonedDoc.getElementById(elementId) || clonedDoc.querySelector('.a4-paper') || clonedDoc.querySelector('.cv-preview-miniature')
+        if (clonedElement) {
+          // Remove transform scale from cloned element
+          if (clonedElement instanceof HTMLElement) {
+            clonedElement.style.transform = 'none'
+            clonedElement.style.position = 'relative'
+            clonedElement.style.width = 'auto'
+            clonedElement.style.height = 'auto'
+            clonedElement.style.top = 'auto'
+            clonedElement.style.left = 'auto'
+            clonedElement.style.overflow = 'visible'
+          }
+          
+          // Force all text to be black and visible in the cloned document
+          const allElements = clonedElement.querySelectorAll('*')
+          allElements.forEach((el: Element) => {
+            if (el instanceof HTMLElement) {
+              // Get computed style from the cloned document's window
+              try {
+                const clonedWindow = clonedDoc.defaultView || (clonedDoc as any).parentWindow || window
+                if (clonedWindow && clonedWindow.getComputedStyle) {
+                  const computedStyle = clonedWindow.getComputedStyle(el)
+                  const color = computedStyle.color
+                  // If text is transparent or white, make it black
+                  if (!color || color === 'rgba(0, 0, 0, 0)' || color === 'transparent' || color.includes('255, 255, 255')) {
+                    el.style.color = '#000000'
+                    el.style.setProperty('color', '#000000', 'important')
+                  }
+                  // Ensure background is white
+                  if (computedStyle.backgroundColor && computedStyle.backgroundColor !== 'rgba(0, 0, 0, 0)' && computedStyle.backgroundColor !== 'transparent') {
+                    const bgColor = computedStyle.backgroundColor
+                    if (bgColor.includes('255, 255, 255')) {
+                      el.style.backgroundColor = '#ffffff'
+                      el.style.setProperty('background-color', '#ffffff', 'important')
+                    }
+                  }
+                } else {
+                  // Fallback: directly set text color to black
+                  el.style.color = '#000000'
+                  el.style.setProperty('color', '#000000', 'important')
+                }
+              } catch (e) {
+                // Fallback: directly set text color to black if there's an error
+                el.style.color = '#000000'
+                el.style.setProperty('color', '#000000', 'important')
+              }
+            }
+          })
+          
+          // Also ensure the cloned element itself has proper styles
+          if (clonedElement instanceof HTMLElement) {
+            clonedElement.style.backgroundColor = '#ffffff'
+            clonedElement.style.setProperty('background-color', '#ffffff', 'important')
+            clonedElement.style.color = '#000000'
+            clonedElement.style.setProperty('color', '#000000', 'important')
+          }
+        }
+      },
     },
     jsPDF: { 
       unit: 'mm',
@@ -121,6 +230,18 @@ export async function exportToPDF(elementId: string, filename: string) {
     element.style.padding = originalPadding
     element.style.margin = originalMargin
     element.style.minHeight = originalMinHeight
+    element.style.transform = originalTransform
+    element.style.position = originalPosition
+    element.style.width = originalWidth
+    element.style.height = originalHeight
+    element.style.top = originalTop
+    element.style.left = originalLeft
+    element.style.overflow = originalOverflow
+    
+    // Restore original text colors
+    originalTextColors.forEach((color, el) => {
+      el.style.color = color
+    })
     
     // Restore excluded elements
     excludedElements.forEach(el => {
@@ -133,6 +254,18 @@ export async function exportToPDF(elementId: string, filename: string) {
     element.style.padding = originalPadding
     element.style.margin = originalMargin
     element.style.minHeight = originalMinHeight
+    element.style.transform = originalTransform
+    element.style.position = originalPosition
+    element.style.width = originalWidth
+    element.style.height = originalHeight
+    element.style.top = originalTop
+    element.style.left = originalLeft
+    element.style.overflow = originalOverflow
+    
+    // Restore original text colors even if export fails
+    originalTextColors.forEach((color, el) => {
+      el.style.color = color
+    })
     
     // Restore excluded elements even if export fails
     excludedElements.forEach(el => {

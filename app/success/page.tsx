@@ -76,7 +76,7 @@ export default function SuccessPage() {
         )}
 
         <div className="flex flex-col sm:flex-row gap-4 justify-center">
-          <Link href="/builder">
+          <Link href="/cv-builder-v2">
             <Button size="lg" variant="primary" className="w-full sm:w-auto">
               <Sparkles className="w-5 h-5 mr-2" />
               Open CV Builder

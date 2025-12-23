@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import Stripe from "stripe";
 
+export const runtime = 'nodejs'
+export const dynamic = 'force-dynamic'
+
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
   apiVersion: "2025-09-30.clover",
 });
@@ -33,8 +36,8 @@ export async function POST(request: NextRequest) {
         },
       ],
       mode: "payment",
-      success_url: `${request.nextUrl.origin}/builder?success=1`,
-      cancel_url: `${request.nextUrl.origin}/builder?canceled=1`,
+      success_url: `${request.nextUrl.origin}/cv-builder-v2?success=1`,
+      cancel_url: `${request.nextUrl.origin}/cv-builder-v2?canceled=1`,
     });
 
     return NextResponse.json({ url: session.url });

@@ -19,15 +19,22 @@ const FORMATTING_INSTRUCTION = `CRITICAL FORMATTING REQUIREMENTS FOR OUTPUT:
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { letter, mode, text, tone, length, role, company, applicantName, keywords } = body
+    const { letter, mode, text, tone, length, role, company, applicantName, keywords, jobTitle, jobDescription } = body
 
     console.log('[Cover Rewrite] payload:', body)
 
+    // Special handling for tailor mode - text is optional (can generate from scratch)
+    const isTailorMode = mode === 'tailor_cover_from_job'
+    
     // Accept both 'letter' and 'text' for backward compatibility
     const letterText = letter || text
 
-    if (!letterText || letterText.trim().length === 0) {
+    if (!isTailorMode && (!letterText || letterText.trim().length === 0)) {
       return NextResponse.json({ ok: false, error: 'Text is required' }, { status: 400 })
+    }
+    
+    if (isTailorMode && !jobTitle && !company) {
+      return NextResponse.json({ ok: false, error: 'Job title or company is required for tailor mode' }, { status: 400 })
     }
 
     // Check if API key is configured
@@ -49,6 +56,7 @@ export async function POST(req: Request) {
       'Body Only': `Rewrite the following cover letter body only in professional, concise English (2–3 short paragraphs, maximum 180 words). Be concise and avoid unnecessary repetition.
 Do NOT include any greeting, closing, signature, names, headings, markdown, bullets, or placeholders.
 Return plain text only. Keep all real details; do not fabricate.`,
+      'tailor_cover_from_job': 'generate or rewrite a professional cover letter body specifically tailored to the provided job. Use a clear, concise, polite tone and focus on why the candidate is a strong fit. Output must be 2–3 short paragraphs, maximum 180 words. Be concise and avoid unnecessary repetition. Do NOT include any greeting, closing, signature, names, headings, markdown, bullets, or placeholders. Return plain text only.',
     }
 
     const lengthGuide: Record<string, string> = {
@@ -65,26 +73,29 @@ Return plain text only. Keep all real details; do not fabricate.`,
     const rewriteMode = mode || tone || 'Enhance'
     const instruction = mode ? modeGuide[mode] : (toneGuide[tone || 'Professional'] || toneGuide['Professional'])
 
-    // Special handling for "Improve" and "Body Only" modes - extract body only
+    // Special handling for "Improve", "Body Only", and "tailor_cover_from_job" modes - extract body only
     const isImproveMode = mode === 'Improve'
     const isBodyOnlyMode = mode === 'Body Only'
     
-    // For ALL rewrite modes (Enhance, Executive Tone, Creative Portfolio, Academic Formal, Improve, Body Only),
+    // For ALL rewrite modes (Enhance, Executive Tone, Creative Portfolio, Academic Formal, Improve, Body Only, tailor_cover_from_job),
     // extract body from cover letter (remove greeting and signature)
     // This ensures we only work on the main paragraph content
-    let bodyText = letterText
-    // Remove greeting lines (e.g., "Dear Hiring Manager," or "Dear Hiring Committee,")
-    bodyText = bodyText
-      .replace(/^(Dear|Hello|Hi|Greetings).*?,\s*/gim, '')
-      // Remove closing lines (e.g., "Sincerely," or signature lines with applicant name)
-      .replace(/\s*(Sincerely|Best regards|Regards|Thank you|Thank you very much|Cordially|With appreciation),?\s*.*$/gim, '')
-      .trim()
+    // For tailor mode, if letterText is empty, we'll generate from scratch
+    let bodyText = letterText || ''
+    if (bodyText) {
+      // Remove greeting lines (e.g., "Dear Hiring Manager," or "Dear Hiring Committee,")
+      bodyText = bodyText
+        .replace(/^(Dear|Hello|Hi|Greetings).*?,\s*/gim, '')
+        // Remove closing lines (e.g., "Sincerely," or signature lines with applicant name)
+        .replace(/\s*(Sincerely|Best regards|Regards|Thank you|Thank you very much|Cordially|With appreciation),?\s*.*$/gim, '')
+        .trim()
+    }
 
     // Build job description/keywords context
     const jobSnippet = role ? (company ? `${role} at ${company}` : role) : (company || '')
     const jobKeywords = keywords || ''
 
-    const systemPrompt = isImproveMode || isBodyOnlyMode
+    const systemPrompt = isImproveMode || isBodyOnlyMode || isTailorMode
       ? `You are a professional cover-letter writer. Produce body-only text (no greeting or sign-off). Write in clear, confident, professional English with a focus on clarity, professionalism, and relevance (no fluff). Maximum 180 words total. Be concise and avoid unnecessary repetition.
 Prioritize specifics over buzzwords: convert duties into impact + metrics (e.g., "reduced load time by 28%"). If the user/job data lacks numbers, infer reasonable qualitative impact without inventing unverifiable facts.
 Never include headings, placeholders, brackets, or explanations. No "Dear…", "Sincerely," names, or contact details. Plain paragraphs only.`
@@ -93,7 +104,24 @@ Do NOT include any greeting lines (e.g., "Dear Hiring Manager," or "Dear Hiring 
 Do NOT include any closing lines (e.g., "Sincerely," or signature with applicant name).
 Return ONLY the main paragraph content of the letter. Write in English only.\n\n${FORMATTING_INSTRUCTION}`
 
-    const userPrompt = isImproveMode || isBodyOnlyMode
+    const userPrompt = isTailorMode
+      ? `You are an expert cover letter writer. ${bodyText ? 'Rewrite' : 'Generate'} a professional cover letter body tailored for the job below.
+
+Job Title: ${jobTitle || 'Not provided'}
+Company: ${company || 'Not provided'}
+${jobDescription ? `Job Description: ${jobDescription.substring(0, 1500)}` : 'Job Description: Not provided'}
+
+${bodyText ? `Current cover letter body to improve:\n${bodyText}\n\n` : ''}Requirements:
+- Write 2–3 short paragraphs, maximum 180 words total
+- Use a clear, concise, polite tone
+- Focus on why the candidate is a strong fit for this specific job
+- Reference specific job requirements and company if provided
+- Be professional and avoid clichés
+- Do NOT include greeting, closing, signature, names, headings, bullets, or placeholders
+- Return plain text only
+
+${bodyText ? 'Rewrite and improve the existing cover letter body to better match this job.' : 'Generate a new cover letter body from scratch tailored to this job.'}`
+      : isImproveMode || isBodyOnlyMode
       ? `Improve the following cover-letter body only to be stronger and more specific for this role.
 
 Maximum 180 words total, 2–3 concise paragraphs. Be professional, clear, and avoid repetition.
@@ -127,7 +155,7 @@ ${jobSnippet}${jobKeywords ? `\n${jobKeywords}` : ''}`
         },
       ],
       temperature: 0.7,
-      max_tokens: (isImproveMode || isBodyOnlyMode) ? 250 : 1000,
+      max_tokens: (isImproveMode || isBodyOnlyMode || isTailorMode) ? 250 : 1000,
     })
 
     const content = completion.choices[0]?.message?.content || ''

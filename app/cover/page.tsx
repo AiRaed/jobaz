@@ -1,33 +1,22 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
-import { motion } from 'framer-motion'
-import { Sparkles, Download, CheckCircle2, AlertCircle, FileText, CreditCard } from 'lucide-react'
-import { Button } from '@/components/button'
-import { Card } from '@/components/card'
-import { ThemeToggle } from '@/components/theme-toggle'
+import { useState, useRef, useEffect, useCallback, useMemo } from 'react'
+import { Sparkles, Download, CheckCircle2, Save, Loader2, X } from 'lucide-react'
 import { ComparePanel } from '@/components/ComparePanel'
 import CoverPreview from '@/components/cover/Preview'
 import { useCoverStore } from '@/lib/cover-store'
 import { useCVStore } from '@/lib/store'
 import { exportToPDF } from '@/lib/pdf'
 import { exportToDocx } from '@/lib/docx'
-import { normalizeCoverLetter, cleanCoverLetterText, normalizeSummaryParagraph, stripPlaceholders } from '@/lib/normalize'
-import { startCheckout } from '@/lib/checkout'
-import { useAiAccess } from '@/lib/use-ai-access'
-import { canUseAI, getPreviewEndAt, startPreview, getAiPreviewStartAt, isPreviewEnded, getPreviewRemainingSeconds } from '@/utils/access'
-import { AiButtonOverlay } from '@/components/AiButtonOverlay'
-import { PreviewBlurOverlay } from '@/components/PreviewBlurOverlay'
-import { InputBlurOverlay } from '@/components/InputBlurOverlay'
+import { cleanCoverLetterText, normalizeSummaryParagraph, stripPlaceholders, cleanJobDetailsCoverLetter, cleanCoverLetterClosing } from '@/lib/normalize'
 import { AIPreviewText } from '@/components/AIPreviewText'
-import { PreviewPaywallModal } from '@/components/PreviewPaywallModal'
-import { PreviewTopBar } from '@/components/PreviewTopBar'
-import { Tabs, TabsList, TabsTrigger, TabsContent } from '@/components/ui/tabs'
-import { LAUNCH_PRICE_GBP, PREVIEW_SECONDS } from '@/lib/funnelConfig'
-import { trackEvent } from '@/lib/analytics'
 import Link from 'next/link'
-
-type PreviewState = 'preview_active' | 'preview_ended' | 'unlocked_24h'
+import { useRouter, useSearchParams } from 'next/navigation'
+import { getJobInfo } from '@/lib/job-store'
+import { cn } from '@/lib/utils'
+import { useJazContext } from '@/contexts/JazContextContext'
+import type { CoverLetterContext } from '@/components/JazAssistant'
+import { getUserScopedKeySync, getCurrentUserIdSync, initUserStorageCache } from '@/lib/user-storage'
 
 type Tab = 'recipient' | 'letter' | 'layout'
 
@@ -36,43 +25,59 @@ interface Variant {
   letter: string
 }
 
+interface JobContext {
+  jobTitle: string | null
+  company: string | null
+  jobId: string | null
+  jobDescription: string | null
+}
+
+interface TailorOptions {
+  mode: 'hard' | 'soft' | 'both'
+  targetRole?: string
+  summaryText?: string
+  experiencePreview?: string
+  userNotes?: string
+}
+
 export default function CoverPage() {
+  const router = useRouter()
+  const searchParams = useSearchParams()
+  const jobId = searchParams?.get('jobId')
+  const mode = searchParams?.get('mode') || 'tailorCv'
+  const returnTo = searchParams?.get('returnTo')
+  const jobTitleFromUrl = searchParams?.get('jobTitle') || ''
   const [activeTab, setActiveTab] = useState<Tab>('recipient')
   const [generateMode, setGenerateMode] = useState<'Executive' | 'Creative' | 'Academic' | 'Technical'>('Executive')
   const [rewriteMode, setRewriteMode] = useState<'Enhance' | 'Executive Tone' | 'Creative Portfolio' | 'Academic Formal'>('Enhance')
   const [variants, setVariants] = useState<Variant[]>([])
   const [showCompare, setShowCompare] = useState(false)
   const [toast, setToast] = useState<{ type: 'success' | 'error'; message: string } | null>(null)
-  const [loading, setLoading] = useState({ gen: false, rewrite: false, compare: false, export: false, improve: false })
-  const [checkoutLoading, setCheckoutLoading] = useState(false)
+  const [loading, setLoading] = useState({ gen: false, rewrite: false, compare: false, export: false, improve: false, tailor: false, tailorFromDescription: false })
   const [aiPreview, setAiPreview] = useState<string>('')
   const [isImprovePreview, setIsImprovePreview] = useState(false)
   const previewRef = useRef<HTMLDivElement>(null)
   const [mounted, setMounted] = useState(false)
-  const priceLabel = `£${LAUNCH_PRICE_GBP.toFixed(2)}`
-
-  // Prevent hydration mismatch by only rendering client-specific content after mount
-  useEffect(() => {
-    setMounted(true)
-  }, [])
-
-  // AI Access state
-  const { valid: hasAiAccess, remainingFormatted } = useAiAccess()
-  const [prevValid, setPrevValid] = useState<boolean | null>(null)
-  const [showPreviewBlur, setShowPreviewBlur] = useState(false)
-  const [showInputBlur, setShowInputBlur] = useState(false)
-  const [lockedInputsRef, setLockedInputsRef] = useState<Set<string>>(new Set())
   
-  // Preview state tracking
-  const [previewState, setPreviewState] = useState<PreviewState | 'not_started'>('not_started')
-  const [previewInitialized, setPreviewInitialized] = useState(false)
-  const [previewRemaining, setPreviewRemaining] = useState<number | null>(null)
-  const [previewEnded, setPreviewEnded] = useState(false)
-  const [paywallVariant, setPaywallVariant] = useState<'preview-ended' | 'access-expired' | null>(null)
-  const previewActive = !hasAiAccess && previewState === 'preview_active'
-  const showPaywall = !hasAiAccess && previewState === 'preview_ended'
+  // Job context from query parameters
+  const [jobContext, setJobContext] = useState<JobContext>({
+    jobTitle: null,
+    company: null,
+    jobId: null,
+    jobDescription: null,
+  })
 
-  // Prevent hydration mismatch - mounted state is set in useEffect after client hydration
+  // Job draft from localStorage (when coming from Job Details page)
+  const [jobDraft, setJobDraft] = useState<null | {
+    jobTitle?: string
+    company?: string
+    jobDescription?: string
+    body?: string
+    savedAt?: number
+  }>(null)
+
+  // Job description for AI tailoring
+  const [jobDescription, setJobDescription] = useState<string>('')
 
   const {
     recipientName,
@@ -92,177 +97,216 @@ export default function CoverPage() {
     setAtsMode,
   } = useCoverStore()
 
-  // Handle access expiration with toast
+  // Prevent hydration mismatch by only rendering client-specific content after mount
   useEffect(() => {
-    if (prevValid === null) {
-      // Initial mount - set previous state
-      setPrevValid(hasAiAccess)
-      return
-    }
-    
-    // Check if access just expired
-    if (prevValid === true && hasAiAccess === false) {
-      showToast('error', 'Your AI access expired. You can unlock again anytime.')
-    }
-    
-    // If user gains access, clear the blur and reset preview funnel
-    if (!prevValid && hasAiAccess) {
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      setLockedInputsRef(new Set())
-      setPreviewRemaining(null)
-      setPreviewEnded(false)
-      setPreviewInitialized(false)
-      setPreviewState('unlocked_24h')
-    }
-    
-    setPrevValid(hasAiAccess)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [hasAiAccess])
+    setMounted(true)
+    initUserStorageCache()
+  }, [])
 
-  // Initialize preview state on mount from localStorage
-  useEffect(() => {
-    if (!mounted) return
-    if (hasAiAccess) {
-      setPreviewState('unlocked_24h')
-      setPreviewRemaining(null)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      return
-    }
+  // Helper function to get user-scoped storage keys
+  const getUserKey = useCallback((baseKey: string) => {
+    const userId = getCurrentUserIdSync()
+    return userId ? getUserScopedKeySync(baseKey, userId) : baseKey
+  }, [])
 
-    const previewStartAt = getAiPreviewStartAt()
-    if (!previewStartAt) {
-      // Preview hasn't started yet
-      setPreviewState('not_started')
-      setPreviewRemaining(null)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      return
-    }
+  // Helper function to load cover draft from localStorage (user-scoped)
+  const loadCoverDraft = useCallback(() => {
+    if (typeof window === 'undefined' || !mounted) return
 
-    // Check if preview has ended
-    const ended = isPreviewEnded()
-    if (ended) {
-      setPreviewState('preview_ended')
-      setPreviewRemaining(0)
-      setPreviewEnded(true)
-      setPaywallVariant('preview-ended')
-      setShowPreviewBlur(true)
-      setShowInputBlur(false)
-      trackEvent('preview_ended')
-    } else {
-      // Preview is still active
-      const remaining = getPreviewRemainingSeconds()
-      setPreviewState('preview_active')
-      setPreviewRemaining(remaining)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      trackEvent('preview_started', { totalSeconds: PREVIEW_SECONDS })
-    }
-    setPreviewInitialized(true)
-  }, [mounted, hasAiAccess])
-
-  // Listen to localStorage changes for preview state
-  useEffect(() => {
-    if (!mounted) return
-
-    const handleStorageChange = () => {
-      if (hasAiAccess) {
-        setPreviewState('unlocked_24h')
-        setPreviewRemaining(null)
-        setPreviewEnded(false)
-        setShowPreviewBlur(false)
-        setShowInputBlur(false)
-        return
-      }
-
-      const previewStartAt = getAiPreviewStartAt()
-      if (!previewStartAt) {
-        setPreviewState('not_started')
-        setPreviewRemaining(null)
-        setPreviewEnded(false)
-        setShowPreviewBlur(false)
-        setShowInputBlur(false)
-        return
-      }
-
-      const ended = isPreviewEnded()
-      if (ended) {
-        setPreviewState('preview_ended')
-        setPreviewRemaining(0)
-        setPreviewEnded(true)
-        setPaywallVariant('preview-ended')
-        setShowPreviewBlur(true)
-        setShowInputBlur(false)
-      } else {
-        const remaining = getPreviewRemainingSeconds()
-        setPreviewState('preview_active')
-        setPreviewRemaining(remaining)
-        setPreviewEnded(false)
-        setShowPreviewBlur(false)
-        setShowInputBlur(false)
-      }
-    }
-
-    window.addEventListener('localStorageChange', handleStorageChange as EventListener)
-    return () => {
-      window.removeEventListener('localStorageChange', handleStorageChange as EventListener)
-    }
-  }, [mounted, hasAiAccess])
-
-  // Tick preview countdown
-  useEffect(() => {
-    if (!mounted) return
-    if (hasAiAccess) return
-    if (previewState !== 'preview_active') return
-    if (previewRemaining === null || previewRemaining <= 0) return
-
-    const interval = setInterval(() => {
-      const remaining = getPreviewRemainingSeconds()
-      
-      if (remaining <= 0) {
-        clearInterval(interval)
-        setPreviewEnded(true)
-        setPreviewState('preview_ended')
-        setPreviewRemaining(0)
-        setPaywallVariant('preview-ended')
-        setShowPreviewBlur(true)
-        setShowInputBlur(false)
-        trackEvent('preview_ended')
-        return
-      }
-
-      setPreviewRemaining(remaining)
-    }, 1000)
-
-    return () => clearInterval(interval)
-  }, [mounted, hasAiAccess, previewState, previewRemaining])
-
-  // Handle checkout
-  const handleCheckout = async () => {
-    setCheckoutLoading(true)
     try {
-      const success = await startCheckout()
-      // If checkout succeeded, redirect will happen in startCheckout
-      // If it failed (returned false), reset loading state
-      if (!success) {
-        setCheckoutLoading(false)
+      const draftKey = getUserKey('cover-draft')
+      const raw = window.localStorage.getItem(draftKey)
+      if (!raw) return
+      
+      const parsed = JSON.parse(raw)
+      setJobDraft(parsed)
+
+      // Check if we came from job details page
+      const cameFromJD = searchParams?.get('from') === 'jobDetails' || searchParams?.get('mode') === 'tailorCv'
+      
+      // Update job context
+      if (parsed.jobTitle || parsed.company) {
+        setJobContext({
+          jobTitle: parsed.jobTitle || null,
+          company: parsed.company || null,
+          jobId: null,
+          jobDescription: parsed.jobDescription || null,
+        })
       }
-    } catch (error) {
-      console.error('Checkout error:', error)
-      setCheckoutLoading(false)
+
+      // Update job description
+      if (parsed.jobDescription) {
+        setJobDescription(parsed.jobDescription)
+      }
+
+      // Hydrate letter body - allow overwrite if coming from job details
+      if (parsed.body) {
+        const cleanedBody = cleanJobDetailsCoverLetter(parsed.body)
+        if (cameFromJD) {
+          // Always hydrate when coming from job details
+          setLetterBody(cleanedBody)
+        } else {
+          // Only hydrate if letter body is empty (check current value)
+          const currentBody = typeof letterBody === 'string' ? letterBody : ''
+          if (!currentBody.trim()) {
+            setLetterBody(cleanedBody)
+          }
+        }
+      }
+
+      // Switch to letter tab when coming from job details
+      if (cameFromJD) {
+        setActiveTab('letter')
+        // Show toast notification
+        setToast({ type: 'success', message: 'Draft loaded from Job Details' })
+        setTimeout(() => setToast(null), 3000)
+      }
+    } catch (e) {
+      console.error('Failed to read cover draft', e)
     }
-  }
+  }, [mounted, searchParams, setLetterBody, setJobDescription])
+
+  // Load draft on mount
+  useEffect(() => {
+    loadCoverDraft()
+  }, [loadCoverDraft])
+
+  // Load draft when searchParams change
+  useEffect(() => {
+    if (mounted) {
+      loadCoverDraft()
+    }
+  }, [mounted, searchParams?.toString(), loadCoverDraft])
+
+  // Listen for storage events (cross-tab updates)
+  useEffect(() => {
+    if (typeof window === 'undefined' || !mounted) return
+
+    const onStorage = (e: StorageEvent) => {
+      if (e.key === 'jobaz-cover-draft') {
+        loadCoverDraft()
+      }
+    }
+
+    window.addEventListener('storage', onStorage)
+    return () => window.removeEventListener('storage', onStorage)
+  }, [mounted, loadCoverDraft])
+
+  // Read job context from query parameters
+  useEffect(() => {
+    if (!mounted) return
+    
+    const jobTitle = searchParams?.get('jobTitle')
+    const company = searchParams?.get('company')
+    const jobId = searchParams?.get('jobId')
+    const jobDescription = searchParams?.get('jobDescription')
+    
+    if (jobTitle || company) {
+      setJobContext({
+        jobTitle: jobTitle ? decodeURIComponent(jobTitle) : null,
+        company: company ? decodeURIComponent(company) : null,
+        jobId: jobId || null,
+        jobDescription: jobDescription ? decodeURIComponent(jobDescription) : null,
+      })
+      
+      // Note: Company, City/State, and Role Title fields removed from UI
+      // Job context is still stored for AI generation purposes
+    }
+  }, [mounted, searchParams, role, company, setRecipientInfo])
+
+  // Auto-fill job information when coming from Job Details page
+  useEffect(() => {
+    if (!mounted) return
+    
+    const jobInfo = getJobInfo()
+    if (jobInfo && returnTo) {
+      // Note: Company, City/State, and Role Title fields removed from UI
+      // Only pre-fill keywords if available
+      if (jobInfo.skills && !keywords) {
+        setKeywords(jobInfo.skills)
+      }
+    }
+  }, [mounted, returnTo, role, cityState, keywords, setRecipientInfo, setKeywords])
 
   const { personal } = useCVStore()
+  const { setContext } = useJazContext()
 
-  // Debug logging
-  if (typeof window !== 'undefined') {
-    console.log('[COVER PAGE] mounted')
+  // Headers for API requests
+  const headers = { 'Content-Type': 'application/json' }
+  
+  // Normalize letterBody to a safe string - handle cases where it might be non-string after hydration
+  const safeLetterBody =
+    typeof letterBody === 'string'
+      ? letterBody
+      : (letterBody && typeof (letterBody as any).body === 'string'
+          ? (letterBody as any).body
+          : '')
+
+  const hasLetterContent = safeLetterBody.trim().length > 0
+  
+  // Compute JAZ context for Cover Letter
+  const jazContext = useMemo<CoverLetterContext>(() => {
+    // Check for placeholders in letter text and extract them
+    const placeholderPatterns = [
+      /\[([^\]]+)\]/g,  // [Company], [Your Name]
+      /\{([^}]+)\}/g,   // {Company}, {Your Name}
+    ]
+    const foundPlaceholders: string[] = []
+    placeholderPatterns.forEach(pattern => {
+      const matches = safeLetterBody.matchAll(pattern)
+      for (const match of matches) {
+        if (match[1] && !foundPlaceholders.includes(match[1])) {
+          foundPlaceholders.push(match[1])
+        }
+      }
+    })
+    const hasPlaceholders = foundPlaceholders.length > 0
+    
+    return {
+      page: 'cover-letter',
+      mode: generateMode,
+      rewriteMode,
+      hasLetterText: hasLetterContent,
+      hasJobDescription: jobDescription.trim().length > 0,
+      hasPlaceholders,
+      placeholders: hasPlaceholders ? foundPlaceholders : undefined,
+    }
+  }, [generateMode, rewriteMode, hasLetterContent, jobDescription, safeLetterBody])
+
+  // Update JAZ context when it changes
+  useEffect(() => {
+    setContext(jazContext)
+    return () => setContext(null) // Cleanup on unmount
+  }, [jazContext, setContext])
+
+  const hasJobContext = !!(
+    jobId ||
+    returnTo ||
+    jobContext.jobTitle ||
+    jobContext.company ||
+    (jobDraft && (jobDraft.jobTitle || jobDraft.company))
+  )
+
+  const handleBackToJobDetails = () => {
+    if (returnTo) {
+      const decoded = decodeURIComponent(returnTo)
+      const urlObj = new URL(decoded, window.location.origin)
+      urlObj.searchParams.set('from', 'cover')
+      router.push(urlObj.pathname + urlObj.search)
+      return
+    }
+    
+    if (jobId) {
+      const url = `/job-details/${jobId}?mode=${mode}&from=cover`
+      router.push(url)
+      return
+    }
+    
+    router.back()
+  }
+
+  const handleBackToDashboard = () => {
+    router.push('/dashboard')
   }
 
   const showToast = (type: 'success' | 'error', message: string) => {
@@ -270,32 +314,107 @@ export default function CoverPage() {
     setTimeout(() => setToast(null), 3000)
   }
 
-  const handleGenerate = async () => {
-    // Start preview timer on first AI button click if not paid and not started
-    if (!hasAiAccess) {
-      const endAt = startPreview()
-      const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000))
-      setPreviewState('preview_active')
-      setPreviewRemaining(remaining)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      if (!previewInitialized) {
-        setPreviewInitialized(true)
-        trackEvent('preview_started', { totalSeconds: PREVIEW_SECONDS })
+  /**
+   * Post-processing cleanup: Remove any closing/signature blocks from AI output.
+   * This function ALWAYS removes common sign-offs and any trailing name lines after them.
+   * Applied before showing AI preview and before applying to form.
+   */
+  const removeClosingSignature = (text: string): string => {
+    if (!text || text.trim().length === 0) {
+      return text
+    }
+
+    let cleaned = text.trim()
+
+    // Common sign-off patterns (case-insensitive, with optional comma)
+    const signOffPatterns = [
+      /\bSincerely,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bKind regards,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bBest regards,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bRegards,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bYours sincerely,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bYours faithfully,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bRespectfully,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bThank you,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bCordially,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+      /\bWith appreciation,?\s*(?:\n\s*[A-Za-z\s]+)?\s*/gim,
+    ]
+
+    // Remove all sign-off patterns
+    signOffPatterns.forEach(pattern => {
+      cleaned = cleaned.replace(pattern, '')
+    })
+
+    // Additional cleanup: remove any trailing lines that look like names
+    // (lines with 2-4 capitalized words, typically at the end)
+    const lines = cleaned.split('\n')
+    const cleanedLines: string[] = []
+    
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim()
+      
+      // Skip empty lines
+      if (line.length === 0) {
+        // Only keep empty line if it's not at the very end
+        if (i < lines.length - 1) {
+          cleanedLines.push('')
+        }
+        continue
       }
+      
+      // Check if this line looks like a name (2-4 capitalized words)
+      const namePattern = /^[A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,3}$/
+      const isLikelyName = namePattern.test(line)
+      
+      // If it's a likely name and we're near the end (last 2 lines), skip it
+      if (isLikelyName && i >= lines.length - 2) {
+        continue
+      }
+      
+      cleanedLines.push(line)
     }
 
-    // Check if AI can be used (after starting preview)
-    if (!canUseAI()) {
-      // Preview ended, show paywall
-      setPreviewState('preview_ended')
-      setPaywallVariant('preview-ended')
-      setShowPreviewBlur(true)
-      setShowInputBlur(false)
-      return
-    }
+    cleaned = cleanedLines.join('\n').trim()
 
+    // Final cleanup: remove any remaining sign-off words that might have been missed
+    cleaned = cleaned.replace(/\b(Sincerely|Kind regards|Best regards|Regards|Yours sincerely|Yours faithfully|Respectfully|Thank you|Cordially|With appreciation),?\s*/gim, '')
+
+    return cleaned.trim()
+  }
+
+  const handleSaveCoverLetterToDashboard = () => {
+    try {
+      // Clean the cover letter before saving
+      const cleanedBody = hasLetterContent ? cleanCoverLetterClosing(safeLetterBody, applicantName || 'Your Name') : ''
+      
+      // Build the base cover letter object from current state
+      const baseCoverLetter = {
+        applicantName: applicantName || '',
+        recipientName: recipientName || '',
+        company: company || '',
+        cityState: cityState || '',
+        role: role || '',
+        bodyText: cleanedBody || '',
+        keywords: keywords || '',
+      }
+
+      // Save to localStorage (user-scoped)
+      const baseCoverKey = getUserKey('baseCoverLetter')
+      const hasCoverKey = getUserKey('hasCoverLetter')
+      const coverLastUpdatedKey = getUserKey('coverLastUpdated')
+      localStorage.setItem(baseCoverKey, JSON.stringify(baseCoverLetter))
+      localStorage.setItem(hasCoverKey, 'true')
+      localStorage.setItem(coverLastUpdatedKey, new Date().toISOString())
+
+      // Show success message
+      showToast('success', 'Cover letter saved to your dashboard.')
+    } catch (error) {
+      console.error('Error saving cover letter to dashboard:', error)
+      showToast('error', 'Failed to save cover letter. Please try again.')
+    }
+  }
+
+  const handleGenerate = async () => {
     setLoading(prev => ({ ...prev, gen: true }))
 
     try {
@@ -304,15 +423,9 @@ export default function CoverPage() {
         setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
       )
 
-      const previewEndAt = getPreviewEndAt()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (previewEndAt) {
-        headers['x-preview-end'] = previewEndAt.toString()
-      }
-
       const fetchPromise = fetch('/api/cover/generate', {
         method: 'POST',
-        headers,
+        headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           applicantName: applicantName, // keep user's name field unchanged
           recipientName, company, cityState, role, mode: generateMode, keywords
@@ -331,13 +444,17 @@ export default function CoverPage() {
           data?.letter || '(temporary draft)…',
           applicantName
         )
-        setAiPreview(cleanedText)
+        // Post-processing: remove any closing/signature blocks
+        const finalText = removeClosingSignature(cleanedText)
+        setAiPreview(finalText)
         setIsImprovePreview(false)
         showToast('success', 'Preview generated - click Apply to update')
       } else {
         // Clean the AI-generated text and store in local preview state (preview only)
         const cleanedText = cleanCoverLetterText(data.letter, applicantName)
-        setAiPreview(cleanedText)
+        // Post-processing: remove any closing/signature blocks
+        const finalText = removeClosingSignature(cleanedText)
+        setAiPreview(finalText)
         setIsImprovePreview(false)
         showToast('success', 'Preview generated - click Apply to update')
       }
@@ -350,37 +467,12 @@ export default function CoverPage() {
   }
 
   const handleImprove = async () => {
-    if (!letterBody.trim()) {
+    if (!hasLetterContent) {
       showToast('error', 'Please write or paste content first')
       return
     }
 
-    // Start preview timer on first AI button click if not paid and not started
-    if (!hasAiAccess) {
-      const endAt = startPreview()
-      const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000))
-      setPreviewState('preview_active')
-      setPreviewRemaining(remaining)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      if (!previewInitialized) {
-        setPreviewInitialized(true)
-        trackEvent('preview_started', { totalSeconds: PREVIEW_SECONDS })
-      }
-    }
-
-    // Check if AI can be used (after starting preview)
-    if (!canUseAI()) {
-      // Preview ended, show paywall
-      setPreviewState('preview_ended')
-      setPaywallVariant('preview-ended')
-      setShowPreviewBlur(true)
-      setShowInputBlur(false)
-      return
-    }
-
-    console.log('[COVER] improve', { chars: letterBody.length })
+    console.log('[COVER] improve', { chars: safeLetterBody.length })
     setLoading(prev => ({ ...prev, improve: true }))
 
     try {
@@ -389,17 +481,11 @@ export default function CoverPage() {
         setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
       )
 
-      const previewEndAt = getPreviewEndAt()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (previewEndAt) {
-        headers['x-preview-end'] = previewEndAt.toString()
-      }
-
       const fetchPromise = fetch('/api/cover/rewrite', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          letter: letterBody,
+          letter: safeLetterBody,
           mode: 'Improve',
           role,
           company,
@@ -427,7 +513,9 @@ export default function CoverPage() {
         const normalized = normalizeSummaryParagraph(improvedText.trim())
         
         if (normalized) {
-          setAiPreview(normalized)
+          // Post-processing: remove any closing/signature blocks
+          const finalText = removeClosingSignature(normalized)
+          setAiPreview(finalText)
           setIsImprovePreview(true)
           showToast('success', 'Preview generated - click Apply to update')
         } else {
@@ -443,37 +531,12 @@ export default function CoverPage() {
   }
 
   const handleRewrite = async () => {
-    // Start preview timer on first AI button click if not paid and not started
-    if (!hasAiAccess) {
-      const endAt = startPreview()
-      const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000))
-      setPreviewState('preview_active')
-      setPreviewRemaining(remaining)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      if (!previewInitialized) {
-        setPreviewInitialized(true)
-        trackEvent('preview_started', { totalSeconds: PREVIEW_SECONDS })
-      }
-    }
-
-    // Check if AI can be used (after starting preview)
-    if (!canUseAI()) {
-      // Preview ended, show paywall
-      setPreviewState('preview_ended')
-      setPaywallVariant('preview-ended')
-      setShowPreviewBlur(true)
-      setShowInputBlur(false)
-      return
-    }
-
-    if (!letterBody.trim()) {
+    if (!hasLetterContent) {
       showToast('error', 'Please generate or write content first')
       return
     }
 
-    console.log('[COVER] rewrite', { mode: rewriteMode, chars: letterBody.length })
+    console.log('[COVER] rewrite', { mode: rewriteMode, chars: safeLetterBody.length })
     setLoading(prev => ({ ...prev, rewrite: true }))
 
     try {
@@ -482,17 +545,11 @@ export default function CoverPage() {
         setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
       )
 
-      const previewEndAt = getPreviewEndAt()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (previewEndAt) {
-        headers['x-preview-end'] = previewEndAt.toString()
-      }
-
       const fetchPromise = fetch('/api/cover/rewrite', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          letter: letterBody,
+          letter: safeLetterBody,
           mode: rewriteMode,
         }),
       })
@@ -512,14 +569,18 @@ export default function CoverPage() {
         // Clean the rewritten text (body only, no greetings/closings) and store in local preview state (preview only)
         // Use stripPlaceholders instead of cleanCoverLetterText since rewrite returns body-only text
         const cleanedText = stripPlaceholders(data.body.trim())
-        setAiPreview(cleanedText)
+        // Post-processing: remove any closing/signature blocks
+        const finalText = removeClosingSignature(cleanedText)
+        setAiPreview(finalText)
         setIsImprovePreview(false)
         showToast('success', 'Preview generated - click Apply to update')
       } else if (data.letter) {
         // Fallback for backward compatibility - clean the text (body only, no greetings/closings) and store in local preview state
         // Use stripPlaceholders instead of cleanCoverLetterText since rewrite returns body-only text
         const cleanedText = stripPlaceholders(data.letter.trim())
-        setAiPreview(cleanedText)
+        // Post-processing: remove any closing/signature blocks
+        const finalText = removeClosingSignature(cleanedText)
+        setAiPreview(finalText)
         setIsImprovePreview(false)
         showToast('success', 'Preview generated - click Apply to update')
         
@@ -533,33 +594,8 @@ export default function CoverPage() {
   }
 
   const handleCompare = async () => {
-    if (!letterBody.trim()) {
+    if (!hasLetterContent) {
       showToast('error', 'Please generate or write content first')
-      return
-    }
-
-    // Start preview timer on first AI button click if not paid and not started
-    if (!hasAiAccess) {
-      const endAt = startPreview()
-      const remaining = Math.max(0, Math.floor((endAt - Date.now()) / 1000))
-      setPreviewState('preview_active')
-      setPreviewRemaining(remaining)
-      setPreviewEnded(false)
-      setShowPreviewBlur(false)
-      setShowInputBlur(false)
-      if (!previewInitialized) {
-        setPreviewInitialized(true)
-        trackEvent('preview_started', { totalSeconds: PREVIEW_SECONDS })
-      }
-    }
-
-    // Check if AI can be used (after starting preview)
-    if (!canUseAI()) {
-      // Preview ended, show paywall
-      setPreviewState('preview_ended')
-      setPaywallVariant('preview-ended')
-      setShowPreviewBlur(true)
-      setShowInputBlur(false)
       return
     }
 
@@ -572,17 +608,11 @@ export default function CoverPage() {
         setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
       )
 
-      const previewEndAt = getPreviewEndAt()
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-      if (previewEndAt) {
-        headers['x-preview-end'] = previewEndAt.toString()
-      }
-
       const fetchPromise = fetch('/api/cover/compare', {
         method: 'POST',
         headers,
         body: JSON.stringify({
-          text: letterBody, // Pass current body text for rewriting/improving
+          text: safeLetterBody, // Pass current body text for rewriting/improving
           keywords,
           mode: generateMode,
           recipientName,
@@ -605,12 +635,16 @@ export default function CoverPage() {
 
       if (data.variants && data.variants.length > 0) {
         // Variants are already cleaned by the API (removes greetings and closings)
-        // We just need to ensure they're trimmed and ready for display
-        const normalizedVariants = data.variants.map((v: Variant) => ({
-          ...v,
-          letter: (v.letter || '').trim(),
-          content: (v.letter || '').trim(), // For compatibility with ComparePanel
-        }))
+        // Apply post-processing cleanup to remove any closing/signature blocks
+        const normalizedVariants = data.variants.map((v: Variant) => {
+          const trimmed = (v.letter || '').trim()
+          const cleaned = removeClosingSignature(trimmed)
+          return {
+            ...v,
+            letter: cleaned,
+            content: cleaned, // For compatibility with ComparePanel
+          }
+        })
         setVariants(normalizedVariants)
         setShowCompare(true)
         showToast('success', 'Generated variants')
@@ -623,8 +657,153 @@ export default function CoverPage() {
     }
   }
 
+  const handleTailorFromJobTitle = () => {
+    if (!jobTitleFromUrl) return
+    
+    // Fill the keywords textarea with the job title
+    setKeywords(jobTitleFromUrl)
+    
+    // Switch to the Letter Body tab
+    setActiveTab('letter')
+  }
+
+  const handleTailor = async () => {
+    if (!jobContext.jobTitle && !jobContext.company) {
+      showToast('error', 'Job information is missing')
+      return
+    }
+
+    console.log('[COVER] tailor', { jobContext })
+    setLoading(prev => ({ ...prev, tailor: true }))
+
+    try {
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+      )
+
+      // Use the rewrite endpoint with a special "tailor" mode
+      // If letterBody is empty, we'll generate from scratch; otherwise, we'll rewrite
+      const fetchPromise = fetch('/api/cover/rewrite', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          letter: safeLetterBody || '', // Pass current body if exists, empty string if not
+          mode: 'tailor_cover_from_job',
+          jobTitle: jobContext.jobTitle,
+          company: jobContext.company,
+          jobDescription: jobContext.jobDescription,
+          role: jobContext.jobTitle || role,
+          applicantName,
+        }),
+      })
+
+      const response = await Promise.race([fetchPromise, timeoutPromise]) as Response
+
+      let data: any = null
+      try { data = await response.json(); } catch {}
+
+      if (!response.ok || !data?.ok) {
+        console.error('[AI] tailor request failed')
+        showToast('error', 'AI temporarily unavailable. Please try again.')
+        return
+      }
+
+      if (data.body || data.letter) {
+        // Clean the tailored text and directly update the letter body
+        const tailoredText = (data.body || data.letter).trim()
+        const cleanedText = stripPlaceholders(tailoredText)
+        // Post-processing: remove any closing/signature blocks
+        const cleanedFromSignatures = removeClosingSignature(cleanedText)
+        const final = cleanCoverLetterClosing(cleanedFromSignatures, applicantName || 'Your Name')
+        setLetterBody(final)
+        setAiPreview('') // Clear any existing preview
+        setIsImprovePreview(false)
+        
+        const jobInfo = jobContext.company 
+          ? `${jobContext.jobTitle || 'this position'} at ${jobContext.company}`
+          : jobContext.jobTitle || 'this job'
+        showToast('success', `Cover letter tailored to ${jobInfo}.`)
+      } else {
+        showToast('error', 'Failed to tailor cover letter. Please try again.')
+      }
+    } catch (error: any) {
+      console.error('[AI] error tailoring cover letter:', error)
+      showToast('error', error.message?.includes('timeout') ? 'Request timed out. Please try again.' : '⚠️ AI request failed')
+    } finally {
+      setLoading(prev => ({ ...prev, tailor: false }))
+    }
+  }
+
+  const handleGenerateFromJobDescription = async () => {
+    if (!jobDescription.trim()) {
+      showToast('error', 'Please paste a job description first')
+      return
+    }
+
+    console.log('[COVER] generate from job description', { jobDescription, jobDraft })
+    setLoading(prev => ({ ...prev, tailorFromDescription: true }))
+
+    try {
+      // Create a timeout promise
+      const timeoutPromise = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error('Request timeout')), 30000) // 30 second timeout
+      )
+
+      // Use the rewrite endpoint with tailor_cover_from_job mode
+      const fetchPromise = fetch('/api/cover/rewrite', {
+        method: 'POST',
+        headers,
+        body: JSON.stringify({
+          letter: safeLetterBody || '', // Pass current body if exists, empty string if not
+          mode: 'tailor_cover_from_job',
+          jobTitle: jobDraft?.jobTitle || jobContext.jobTitle || null,
+          company: jobDraft?.company || jobContext.company || null,
+          jobDescription: jobDescription,
+          role: jobDraft?.jobTitle || jobContext.jobTitle || role,
+          applicantName,
+        }),
+      })
+
+      const response = await Promise.race([fetchPromise, timeoutPromise]) as Response
+
+      let data: any = null
+      try { data = await response.json(); } catch {}
+
+      if (!response.ok || !data?.ok) {
+        console.error('[AI] generate from job description request failed')
+        showToast('error', 'AI temporarily unavailable. Please try again.')
+        return
+      }
+
+      if (data.body || data.letter) {
+        // Clean the tailored text and directly update the letter body
+        const tailoredText = (data.body || data.letter).trim()
+        const cleanedText = stripPlaceholders(tailoredText)
+        // Post-processing: remove any closing/signature blocks
+        const cleanedFromSignatures = removeClosingSignature(cleanedText)
+        const final = cleanCoverLetterClosing(cleanedFromSignatures, applicantName || 'Your Name')
+        setLetterBody(final)
+        setAiPreview('') // Clear any existing preview
+        setIsImprovePreview(false)
+        
+        const jobInfo = jobDraft?.company 
+          ? `${jobDraft?.jobTitle || 'this position'} at ${jobDraft.company}`
+          : jobDraft?.jobTitle || jobContext.jobTitle || 'this job'
+        showToast('success', `Cover letter generated from job description for ${jobInfo}.`)
+      } else {
+        showToast('error', 'Failed to generate cover letter. Please try again.')
+      }
+    } catch (error: any) {
+      console.error('[AI] error generating from job description:', error)
+      showToast('error', error.message?.includes('timeout') ? 'Request timed out. Please try again.' : '⚠️ AI request failed')
+    } finally {
+      setLoading(prev => ({ ...prev, tailorFromDescription: false }))
+    }
+  }
+
   const handleExport = async (format: 'pdf' | 'docx') => {
-    if (!letterBody) {
+    if (!hasLetterContent) {
       showToast('error', 'Please add content first')
       return
     }
@@ -641,11 +820,20 @@ export default function CoverPage() {
         // DOCX filename: Cover-[Date].docx (per requirements)
         const filename = `Cover-${date}`
         
-        // Build full letter content with greeting, body, and signature
+        // Check if letterBody already contains a complete letter
+        // (both greeting starting with "Dear" and closing with "Sincerely,")
+        const hasFullLetter =
+          safeLetterBody.trim().toLowerCase().includes("dear ") &&
+          safeLetterBody.toLowerCase().includes("sincerely,");
+        
+        // Build full letter content - use letterBody as-is if it's complete, otherwise add greeting and closing
         const greetName = recipientName.trim() || 'Hiring Manager'
         const signatureName = applicantName.trim() || 'Your Name'
         
-        const letterContent = `Dear ${greetName},\n\n${letterBody}\n\nSincerely,\n${signatureName}`
+        const letterContent = hasFullLetter
+          ? safeLetterBody
+          : `Dear ${greetName},\n\n${safeLetterBody}\n\nSincerely,\n${signatureName}`
+        
         const sections = [{ title: 'Cover Letter', content: [letterContent] }]
         await exportToDocx('Cover Letter', sections, filename)
       }
@@ -660,537 +848,456 @@ export default function CoverPage() {
 
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 to-platinum dark:from-gray-900 dark:to-page text-gray-900 dark:text-gray-100 transition-colors duration-300">
-      {/* Toast */}
-      {toast && (
-        <motion.div
-          initial={{ opacity: 0, y: -20 }}
-          animate={{ opacity: 1, y: 0 }}
-          className={`fixed top-20 right-4 z-50 p-4 rounded-2xl shadow-md flex items-center gap-3 ${
-            toast.type === 'success' ? 'bg-green-600' : 'bg-red-600'
-          }`}
-          onClick={() => setToast(null)}
-        >
-          {toast.type === 'success' ? (
-            <CheckCircle2 className="w-5 h-5 text-white" />
-          ) : (
-            <AlertCircle className="w-5 h-5 text-white" />
-          )}
-          <span className="text-white font-medium">{toast.message}</span>
-        </motion.div>
-      )}
+    <div className="min-h-screen bg-gradient-to-br from-[#050816] via-[#050617] to-[#02010f] text-slate-50 relative overflow-hidden">
+      {/* Background glows */}
+      <div className="pointer-events-none absolute -top-40 -left-24 h-72 w-72 rounded-full bg-violet-600/30 blur-3xl" />
+      <div className="pointer-events-none absolute bottom-[-6rem] right-[-4rem] h-80 w-80 rounded-full bg-fuchsia-500/25 blur-3xl" />
 
-      {/* Header */}
-      <header className="border-b border-gray-200 dark:border-gray-800 bg-white/80 dark:bg-gray-900/80 backdrop-blur-sm sticky top-0 z-50 transition-colors duration-300">
-        <div className="container mx-auto px-4 py-4 flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <Sparkles className="w-8 h-8 text-violet-accent" />
-            <span className="text-2xl font-heading font-bold">AI CV Generator Pro</span>
-            <span className="text-sm text-violet-400 dark:text-violet-400">/ Cover Letter</span>
-          </Link>
-          <div className="flex items-center gap-4">
-            {mounted && hasAiAccess && remainingFormatted ? (
-              <div className="flex items-center gap-2 px-3 py-1.5 bg-violet-50 dark:bg-violet-900/20 border border-violet-200 dark:border-violet-800 rounded-lg">
-                <Sparkles className="w-4 h-4 text-violet-600 dark:text-violet-400" />
-                <span className="text-sm font-medium text-violet-600 dark:text-violet-400">
-                  AI access:
-                </span>
-                <span className="text-sm font-mono font-bold text-violet-600 dark:text-violet-400">
-                  {remainingFormatted}
-                </span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">left</span>
-              </div>
-            ) : mounted && showPaywall ? (
-              <>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  isLoading={checkoutLoading}
-                  onClick={handleCheckout}
-                  className="hidden md:inline-flex"
-                  aria-label={`Unlock AI for 24h — ${priceLabel}`}
+      {/* Main container */}
+      <main className="relative z-10 max-w-6xl mx-auto px-4 md:px-8 py-6 md:py-10">
+        <header className="mb-4 pb-4 border-b border-slate-800/60">
+          <div className="flex flex-col gap-1">
+            <div className="flex items-center gap-4 text-xs md:text-sm text-slate-400 mb-3">
+              <button
+                type="button"
+                onClick={handleBackToDashboard}
+                className="hover:text-slate-100 transition"
+              >
+                ← Back to Dashboard
+              </button>
+
+              {hasJobContext && (
+                <button
+                  type="button"
+                  onClick={handleBackToJobDetails}
+                  className="hover:text-slate-100 transition"
                 >
-                  <CreditCard className="w-4 h-4 mr-2" />
-                  Pay with Stripe — {priceLabel}
-                </Button>
-                <Button
-                  variant="primary"
-                  size="sm"
-                  isLoading={checkoutLoading}
-                  onClick={handleCheckout}
-                  className="md:hidden"
-                  aria-label={`Unlock AI for 24h — ${priceLabel}`}
-                >
-                  <CreditCard className="w-4 h-4 mr-1" />
-                  Pay — {priceLabel}
-                </Button>
-              </>
-            ) : (
-              // SSR placeholder - matches the button layout to prevent hydration mismatch
-              <>
-                <div className="hidden md:inline-flex h-[36px] w-[180px]" aria-hidden="true" />
-                <div className="md:hidden h-[36px] w-[100px]" aria-hidden="true" />
-              </>
-            )}
-            <Link
-              href="/builder"
-              prefetch
-              className="inline-flex items-center justify-center rounded-2xl font-medium transition-all duration-300 px-4 py-2 text-sm bg-gray-200 dark:bg-gray-700 text-gray-900 dark:text-gray-100 hover:bg-gray-300 dark:hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              CV Builder
-            </Link>
-            <ThemeToggle />
+                  ← Back to Job Details
+                </button>
+              )}
+            </div>
+            <h1 className="text-2xl md:text-3xl font-semibold text-slate-50 m-0">
+              JobAZ – Cover Letter Builder
+            </h1>
+            <p className="mt-1 text-xs md:text-sm text-slate-400 m-0">
+              Generate personalized cover letters that match your CV and target job
+            </p>
           </div>
-        </div>
-      </header>
+        </header>
 
-      {/* Preview countdown bar */}
-      {!hasAiAccess && previewState === 'preview_active' && previewRemaining !== null && (
-        <PreviewTopBar
-          remainingSeconds={previewRemaining}
-          onPayClick={handleCheckout}
-        />
-      )}
-
-      <div className="container mx-auto px-4 py-8">
-        <div className="mb-6 text-center">
-          <p className="text-sm text-gray-600 dark:text-gray-400">
-            Generate personalized Cover Letters that perfectly match your CV.
-          </p>
+        {/* Action buttons */}
+        <div className="mb-6 flex flex-wrap gap-2">
+          <button
+            onClick={handleSaveCoverLetterToDashboard}
+            className="rounded-full bg-slate-900/80 px-4 py-2 text-xs md:text-sm font-medium text-slate-100 border border-slate-600/70 hover:border-violet-400/60 hover:text-violet-100 transition flex items-center gap-2"
+          >
+            <Save className="w-4 h-4" />
+            Save Cover Letter to Dashboard
+          </button>
         </div>
-        <div className="grid lg:grid-cols-2 gap-8">
-          {/* Left Panel - Form */}
+
+        {/* Two-column layout */}
+        <section className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)] items-start">
+          {/* LEFT: Form + AI Engine */}
           <div className="space-y-6">
-            {/* Tabs */}
-            <Card>
-              <Tabs value={activeTab} onValueChange={(value: string) => setActiveTab(value as Tab)} className="w-full">
-                <TabsList className="w-full grid grid-cols-2 gap-2 mb-6 pointer-events-auto">
-                  <TabsTrigger value="recipient">Recipient</TabsTrigger>
-                  <TabsTrigger value="letter">Letter Body</TabsTrigger>
-                  {/* Layout tab - hidden for now, can be re-enabled later */}
-                  {/* <TabsTrigger value="layout">Layout</TabsTrigger> */}
-                </TabsList>
+            {/* Tabs Card */}
+            <div className="rounded-2xl border border-slate-700/60 bg-slate-950/70 shadow-[0_18px_40px_rgba(15,23,42,0.9)] backdrop-blur overflow-hidden">
+              <div className="flex overflow-x-auto border-b border-slate-700/60 scrollbar-thin scrollbar-thumb-violet-600">
+                {[
+                  { id: 'recipient' as Tab, label: 'Recipient' },
+                  { id: 'letter' as Tab, label: 'Letter Body' },
+                ].map((tab) => (
+                  <button
+                    key={tab.id}
+                    onClick={() => setActiveTab(tab.id)}
+                    className={cn(
+                      'px-4 py-3 text-sm font-medium transition whitespace-nowrap relative',
+                      activeTab === tab.id
+                        ? 'text-violet-300 border-b-2 border-violet-500'
+                        : 'text-slate-400 hover:text-slate-200'
+                    )}
+                  >
+                    {tab.label}
+                    {activeTab === tab.id && (
+                      <div className="absolute bottom-0 left-0 right-0 h-0.5 bg-gradient-to-r from-violet-500 to-fuchsia-500" />
+                    )}
+                  </button>
+                ))}
+              </div>
 
+              {/* Tab content */}
+              <div className="p-4 md:p-5 space-y-3">
                 {/* Recipient Tab */}
-                <TabsContent value="recipient">
+                {activeTab === 'recipient' && (
                   <div className="space-y-4">
                     <div>
-                      <label className="block text-sm font-medium mb-2">Applicant Name</label>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Applicant Name</label>
                       <input
                         type="text"
                         placeholder="Your Name"
                         value={applicantName}
                         onChange={(e) => setApplicantName(e.target.value)}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 transition-colors duration-300"
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition"
                       />
-                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                      <p className="text-[10px] md:text-xs text-slate-400 mt-1">
                         Used in the signature (e.g., &quot;Sincerely, Your Name&quot;)
                       </p>
                     </div>
                     <div>
-                      <label className="block text-sm font-medium mb-2">Recipient Name (optional)</label>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Recipient Name (optional)</label>
                       <input
                         type="text"
                         placeholder="Hiring Manager"
                         value={recipientName}
                         onChange={(e) => setRecipientInfo({ recipientName: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 transition-colors duration-300"
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition"
                       />
+                      <p className="text-[10px] md:text-xs text-slate-400 mt-1">
+                        If left blank, we&apos;ll use generic salutations (&apos;Dear Hiring Manager,&apos;).
+                      </p>
                     </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Company (optional)</label>
-                      <input
-                        type="text"
-                        placeholder="Company Name"
-                        value={company}
-                        onChange={(e) => setRecipientInfo({ company: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 transition-colors duration-300"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">City, State (optional)</label>
-                      <input
-                        type="text"
-                        placeholder="New York, NY"
-                        value={cityState}
-                        onChange={(e) => setRecipientInfo({ cityState: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 transition-colors duration-300"
-                      />
-                    </div>
-                    <div>
-                      <label className="block text-sm font-medium mb-2">Role Title (optional)</label>
-                      <input
-                        type="text"
-                        placeholder="Software Engineer"
-                        value={role}
-                        onChange={(e) => setRecipientInfo({ role: e.target.value })}
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 transition-colors duration-300"
-                      />
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400">
-                      If left blank, we&apos;ll use generic salutations (&apos;Dear Hiring Manager,&apos;).
-                    </p>
                   </div>
-                </TabsContent>
+                )}
 
                 {/* Letter Body Tab */}
-                <TabsContent value="letter">
+                {activeTab === 'letter' && (
                   <div className="space-y-4">
                     <div className="relative">
                       <textarea
                         placeholder="Write or paste your cover letter here..."
-                        className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 min-h-[300px] transition-colors duration-300"
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 placeholder:text-slate-500 min-h-[300px] focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition resize-y"
                         value={letterBody}
                         onChange={(e) => setLetterBody(e.target.value)}
-                        onCopy={(e) => {
-                          if (showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim()) {
-                            e.preventDefault()
-                          }
-                        }}
-                        onCut={(e) => {
-                          if (showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim()) {
-                            e.preventDefault()
-                          }
-                        }}
-                        onPaste={(e) => {
-                          if (showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim()) {
-                            e.preventDefault()
-                          }
-                        }}
-                        style={{
-                          pointerEvents: showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim() ? 'none' : 'auto',
-                          userSelect: showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim() ? 'none' : 'auto',
-                        }}
                       />
-                      {/* Only show overlay on Letter Body if it contains AI text (from Apply to Form) */}
-                      {showInputBlur && lockedInputsRef.has('letter') && !hasAiAccess && letterBody.trim() && (
-                        <InputBlurOverlay 
-                          onUnlock={() => {
-                            setShowInputBlur(false)
-                            setLockedInputsRef(new Set())
-                          }}
-                          showButton={previewState === 'preview_ended'}
-                        />
-                      )}
                     </div>
                     {/* AI Improve Button - only show when letterBody has content */}
-                    {letterBody.trim() && (
+                    {hasLetterContent && (
                       <div>
-                        <AiButtonOverlay disabled={!canUseAI()}>
-                          <Button
-                            onClick={handleImprove}
-                            disabled={loading.improve || !letterBody.trim()}
-                            isLoading={loading.improve}
-                            variant="primary"
-                            className="w-full"
-                          >
-                            <Sparkles className="w-4 h-4 mr-2" />
-                            AI Improve Cover Letter
-                          </Button>
-                        </AiButtonOverlay>
-                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
+                        <button
+                          onClick={handleImprove}
+                          disabled={loading.improve || !hasLetterContent}
+                          data-jaz-action="cover_improve"
+                          className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                          {loading.improve ? (
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <>
+                              <Sparkles className="w-4 h-4" />
+                              AI Improve Cover Letter
+                            </>
+                          )}
+                        </button>
+                        <p className="text-[10px] md:text-xs text-slate-400 mt-2">
                           Refine your existing cover letter—clearer, tighter, and tailored.
                         </p>
                       </div>
                     )}
                     {/* AI Draft Preview */}
                     {aiPreview && (
-                      <div className="rounded-xl border p-4 bg-violet-50 dark:bg-violet-900/20 border-violet-200 dark:border-violet-800 relative">
+                      <div className="rounded-xl border border-violet-500/30 p-4 bg-violet-950/30 relative">
                         <div className="flex items-center justify-between mb-2">
-                          <span className="text-sm font-semibold text-violet-900 dark:text-violet-200">AI Preview Available</span>
+                          <span className="text-sm font-semibold text-violet-300">AI Preview Available</span>
                         </div>
-                        <p className="text-xs text-gray-600 dark:text-gray-400 mb-2">AI-generated content ready to apply</p>
-                        <div 
-                          className="text-sm bg-white dark:bg-gray-800 p-3 rounded-lg"
-                          onCopy={(e) => {
-                            if ((showPreviewBlur || showInputBlur) && !hasAiAccess) {
-                              e.preventDefault()
-                            }
-                          }}
-                          onCut={(e) => {
-                            if ((showPreviewBlur || showInputBlur) && !hasAiAccess) {
-                              e.preventDefault()
-                            }
-                          }}
-                          onPaste={(e) => {
-                            if ((showPreviewBlur || showInputBlur) && !hasAiAccess) {
-                              e.preventDefault()
-                            }
-                          }}
-                          style={{
-                            pointerEvents: (showPreviewBlur || showInputBlur) && !hasAiAccess ? 'none' : 'auto',
-                            userSelect: (showPreviewBlur || showInputBlur) && !hasAiAccess ? 'none' : 'auto',
-                          }}
-                        >
+                        <p className="text-[10px] md:text-xs text-slate-400 mb-2">AI-generated content ready to apply</p>
+                        <div className="text-sm bg-slate-900/50 p-3 rounded-lg text-white">
                           <AIPreviewText text={aiPreview || ''} paragraph={isImprovePreview} />
                         </div>
                         <div className="mt-3 flex gap-2 justify-end">
-                          {!(showPreviewBlur || showInputBlur) || hasAiAccess ? (
-                            <>
-                              <Button 
-                                size="sm" 
-                                onClick={() => {
-                                  if (!aiPreview?.trim()) return;
-                                  // Trim leading/trailing blank lines before applying
-                                  const appliedText = aiPreview.trim();
-                                  setLetterBody(appliedText);
-                                  setAiPreview('');
-                                  setIsImprovePreview(false);
-                                  showToast('success', 'Applied to form');
-                                }} 
-                                disabled={!aiPreview.trim()}
-                              >
-                                Apply to Form
-                              </Button>
-                              <Button 
-                                size="sm" 
-                                variant="outline" 
-                                onClick={() => {
-                                  setAiPreview('');
-                                  setIsImprovePreview(false);
-                                  showToast('success', 'Preview cancelled');
-                                }}
-                              >
-                                Discard
-                              </Button>
-                            </>
-                          ) : null}
-                        </div>
-                        {(showPreviewBlur || showInputBlur) && !hasAiAccess && (
-                          <InputBlurOverlay 
-                            onUnlock={() => {
-                              setShowPreviewBlur(false)
-                              setShowInputBlur(false)
-                              setLockedInputsRef(new Set())
+                          <button
+                            onClick={() => {
+                              if (!aiPreview?.trim()) return;
+                              // Post-processing: remove any closing/signature blocks before applying
+                              const cleanedPreview = removeClosingSignature(aiPreview.trim());
+                              const final = cleanCoverLetterClosing(cleanedPreview, applicantName || 'Your Name');
+                              setLetterBody(final);
+                              setAiPreview('');
+                              setIsImprovePreview(false);
+                              showToast('success', 'Applied to form');
                             }}
-                            showButton={previewState === 'preview_ended'}
-                          />
-                        )}
+                            disabled={!aiPreview.trim()}
+                            className="rounded-full bg-violet-600 px-3 py-1.5 text-xs font-medium text-white border border-violet-400/70 hover:bg-violet-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Apply to Form
+                          </button>
+                          <button
+                            onClick={() => {
+                              setAiPreview('');
+                              setIsImprovePreview(false);
+                              showToast('success', 'Preview cancelled');
+                            }}
+                            className="rounded-full bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 border border-slate-600/70 hover:bg-slate-700 transition"
+                          >
+                            Discard
+                          </button>
+                        </div>
                       </div>
                     )}
-
-                    {/* AI Engine Section - Only in Letter Body tab */}
-                    <Card className="mt-6">
-                      <div className="space-y-4">
-                        <div className="flex items-center justify-between">
-                          <h4 className="text-lg font-heading font-semibold flex items-center gap-2">
-                            <Sparkles className="w-5 h-5 text-violet-accent" />
-                            AI Engine
-                          </h4>
-                        </div>
-                        
-                        <div>
-                          <label className="block text-sm font-medium mb-2">Generate from Keywords</label>
-                          <p className="text-xs text-muted-foreground mb-2">No cover letter yet? Enter a few keywords and AI will create one for you.</p>
-                          <textarea
-                            placeholder="e.g., Senior Software Engineer, Python, React, AWS..."
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 min-h-[80px] transition-colors duration-300"
-                            value={keywords}
-                            onChange={(e) => setKeywords(e.target.value)}
-                          />
-                          <div className="mt-2">
-                            <label className="block text-sm font-medium mb-2">Mode</label>
-                            <select
-                              className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900"
-                              value={generateMode}
-                              onChange={(e) => setGenerateMode(e.target.value as any)}
-                            >
-                              <option value="Executive">Executive</option>
-                              <option value="Creative">Creative</option>
-                              <option value="Academic">Academic</option>
-                              <option value="Technical">Technical</option>
-                            </select>
-                          </div>
-                          <AiButtonOverlay disabled={!canUseAI()}>
-                            <Button
-                              onClick={handleGenerate}
-                              disabled={loading.gen || !keywords}
-                              isLoading={loading.gen}
-                              className="mt-2 w-full"
-                            >
-                              <Sparkles className="w-4 h-4 mr-2" />
-                              Generate
-                            </Button>
-                          </AiButtonOverlay>
-                          <p className="text-xs text-gray-500 dark:text-gray-400 mt-2">
-                            Use this if you don&apos;t have a cover letter yet.
-                          </p>
-                        </div>
-
-                        <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
-                          <label className="block text-sm font-medium mb-2">Rewrite Mode</label>
-                          <select
-                            className="w-full px-4 py-3 rounded-xl border border-gray-200 dark:border-gray-800 bg-white dark:bg-gray-900 mb-2"
-                            value={rewriteMode}
-                            onChange={(e) => setRewriteMode(e.target.value as any)}
-                          >
-                            <option value="Enhance">Enhance</option>
-                            <option value="Executive Tone">Executive Tone</option>
-                            <option value="Creative Portfolio">Creative Portfolio</option>
-                            <option value="Academic Formal">Academic Formal</option>
-                          </select>
-                          <AiButtonOverlay disabled={!canUseAI()}>
-                            <Button
-                              onClick={handleRewrite}
-                              disabled={loading.rewrite || !letterBody}
-                              isLoading={loading.rewrite}
-                              variant="secondary"
-                              className="w-full"
-                            >
-                              Rewrite
-                            </Button>
-                          </AiButtonOverlay>
-                        </div>
-
-                        <div className="border-t border-gray-200 dark:border-gray-800 pt-4">
-                          <AiButtonOverlay disabled={!canUseAI()}>
-                            <Button
-                              onClick={handleCompare}
-                              disabled={loading.compare || !letterBody}
-                              isLoading={loading.compare}
-                              variant="outline"
-                              className="w-full"
-                            >
-                              Compare 3 AI Versions
-                            </Button>
-                          </AiButtonOverlay>
-                          <p className="text-sm text-gray-500 dark:text-gray-400 mt-2">
-                            Generate and compare three different AI-written versions of your text.
-                          </p>
-                        </div>
-                      </div>
-                    </Card>
                   </div>
-                </TabsContent>
+                )}
+              </div>
+            </div>
 
-                {/* Layout Tab - hidden for now, can be re-enabled later */}
-                {/* <TabsContent value="layout">
-                  <div className="space-y-4">
-                    <div>
-                      <label className="block text-sm font-medium mb-3">Style</label>
-                      <div className="grid grid-cols-2 gap-4">
-                        {(['minimal', 'modern', 'corporate', 'portfolio'] as const).map((layoutOption) => (
-                          <button
-                            key={layoutOption}
-                            onClick={() => setLayout(layoutOption)}
-                            className={`p-4 rounded-xl border-2 text-center capitalize transition-colors duration-300 ${
-                              layout === layoutOption
-                                ? 'border-violet-accent bg-violet-accent/10'
-                                : 'border-gray-200 dark:border-gray-800 hover:border-gray-300'
-                            }`}
-                          >
-                            {layoutOption}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    
-                    <div className="flex items-center gap-3 pt-4 border-t border-gray-200 dark:border-gray-800">
-                      <input
-                        type="checkbox"
-                        id="atsMode"
-                        checked={atsMode}
-                        onChange={(e) => setAtsMode(e.target.checked)}
-                        className="w-4 h-4 rounded border-gray-300 text-violet-accent focus:ring-violet-accent"
-                      />
-                      <label htmlFor="atsMode" className="text-sm font-medium">
-                        ATS Mode (monochrome, print-safe)
-                      </label>
-                    </div>
+
+            {/* AI Engine Card - Only show in Letter Body tab */}
+            {activeTab === 'letter' && (
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-950/70 shadow-[0_18px_40px_rgba(15,23,42,0.9)] backdrop-blur p-4 md:p-5">
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-heading font-semibold text-slate-100 mb-1 flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-violet-400" />
+                      AI Engine
+                    </h3>
+                    <p className="text-[10px] md:text-xs text-slate-400 mb-4">
+                      No cover letter yet? Enter a few keywords and AI will create one for you.
+                    </p>
                   </div>
-                </TabsContent> */}
-              </Tabs>
-            </Card>
-          </div>
-
-          {/* Right Panel - Preview */}
-          <div className="space-y-6">
-            <Card>
-                <div className="mb-4">
-                  <h3 className="text-xl font-heading font-semibold mb-4">Preview</h3>
-                  <div className="flex flex-col items-center">
-                    <div className="flex flex-row gap-4 items-center justify-center">
-                      <Button 
-                        size="sm" 
-                        onClick={() => handleExport('pdf')} 
-                        isLoading={loading.export}
-                        className="rounded-full px-4 py-2 focus-visible:ring-2 focus-visible:ring-violet-accent focus-visible:ring-offset-2"
-                        aria-label="Download PDF"
+                  
+                  {/* Tailor from job title button - Only show when jobTitleFromUrl is not empty */}
+                  {jobTitleFromUrl && (
+                    <div className="mb-4">
+                      <button
+                        onClick={handleTailorFromJobTitle}
+                        className="px-3 py-1.5 text-xs font-medium text-violet-300 border border-violet-500/50 rounded-lg hover:bg-violet-500/10 hover:border-violet-400/70 transition"
                       >
-                        <Download className="w-4 h-4 mr-2" />
-                        PDF
-                      </Button>
-                      <Button 
-                        size="sm" 
-                        variant="outline" 
-                        onClick={() => handleExport('docx')} 
-                        isLoading={loading.export}
-                        className="rounded-full px-4 py-2 border-2 border-violet-accent text-violet-accent hover:bg-violet-accent hover:text-white bg-transparent dark:bg-transparent dark:border-violet-accent dark:text-violet-accent dark:hover:bg-violet-accent dark:hover:text-white focus-visible:ring-2 focus-visible:ring-violet-accent focus-visible:ring-offset-2"
-                        aria-label="Download DOCX"
-                        aria-describedby="docx-helper-text"
-                      >
-                        <Download className="w-4 h-4 mr-2" />
-                        DOCX
-                      </Button>
+                        Tailor from job title
+                      </button>
                     </div>
-                    <span 
-                      id="docx-helper-text" 
-                      className="text-xs mt-2 text-center"
-                      style={{ 
-                        fontSize: '12px', 
-                        color: '#9CA3AF',
-                        fontFamily: 'inherit',
-                        fontWeight: 'normal'
-                      }}
-                    >
-                      Download DOCX to edit or add more details.
-                    </span>
-                  </div>
-                </div>
-              <div className="flex justify-center">
-                <div className="a4-preview-frame relative">
-                  <div 
-                    ref={previewRef} 
-                    id="cover-preview" 
-                    className="a4-paper cv-container"
-                    onCopy={(e) => {
-                      if (showPreviewBlur && !hasAiAccess) {
-                        e.preventDefault()
-                      }
-                    }}
-                    onCut={(e) => {
-                      if (showPreviewBlur && !hasAiAccess) {
-                        e.preventDefault()
-                      }
-                    }}
-                    onPaste={(e) => {
-                      if (showPreviewBlur && !hasAiAccess) {
-                        e.preventDefault()
-                      }
-                    }}
-                    style={{
-                      pointerEvents: showPreviewBlur && !hasAiAccess ? 'none' : 'auto',
-                      userSelect: showPreviewBlur && !hasAiAccess ? 'none' : 'auto',
-                    }}
-                  >
-                    <CoverPreview aiPreview={aiPreview} />
-                  </div>
-                  {showPreviewBlur && !hasAiAccess && (
-                    <PreviewBlurOverlay 
-                      onUnlock={() => {
-                        setShowPreviewBlur(false)
-                        setShowInputBlur(false)
-                        setLockedInputsRef(new Set())
-                      }}
-                      showButton={previewState === 'preview_ended'}
-                    />
                   )}
+                  
+                  {/* Tailor to Job Button - Only show when job context exists */}
+                  {(jobContext.jobTitle || jobContext.company) && (
+                    <div className="border-b border-slate-700/60 pb-4 space-y-2">
+                      <button
+                        onClick={handleTailor}
+                        disabled={loading.tailor}
+                        className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                      >
+                        {loading.tailor ? (
+                          <>
+                            <Loader2 className="w-4 h-4 animate-spin" />
+                            Tailoring...
+                          </>
+                        ) : (
+                          <>
+                            <Sparkles className="w-4 h-4" />
+                            Tailor cover letter to this job
+                          </>
+                        )}
+                      </button>
+                      <p className="text-[10px] md:text-xs text-slate-400">
+                        Use the job title and description to adapt your cover letter automatically.
+                      </p>
+                    </div>
+                  )}
+                  
+                  {/* Generate from Keywords */}
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Generate from Keywords</label>
+                      <textarea
+                        placeholder="e.g., Senior Software Engineer, Python, React, AWS..."
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 placeholder:text-slate-500 min-h-[80px] focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition resize-y"
+                        value={keywords}
+                        onChange={(e) => setKeywords(e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Mode</label>
+                      <select
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition"
+                        value={generateMode}
+                        onChange={(e) => setGenerateMode(e.target.value as any)}
+                      >
+                        <option value="Executive">Executive</option>
+                        <option value="Creative">Creative</option>
+                        <option value="Academic">Academic</option>
+                        <option value="Technical">Technical</option>
+                      </select>
+                    </div>
+                    <button
+                      onClick={handleGenerate}
+                      disabled={loading.gen || !keywords}
+                      data-jaz-action="cover_generate_keywords"
+                      className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading.gen ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          Generate
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Rewrite Section */}
+                  <div className="border-t border-slate-700/60 pt-4 space-y-3">
+                    <div>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Rewrite Mode</label>
+                      <select
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition"
+                        value={rewriteMode}
+                        onChange={(e) => setRewriteMode(e.target.value as any)}
+                      >
+                        <option value="Enhance">Enhance</option>
+                        <option value="Executive Tone">Executive Tone</option>
+                        <option value="Creative Portfolio">Creative Portfolio</option>
+                        <option value="Academic Formal">Academic Formal</option>
+                      </select>
+                    </div>
+                    <button
+                      onClick={handleRewrite}
+                      disabled={loading.rewrite || !hasLetterContent}
+                      data-jaz-action="cover_rewrite"
+                      className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading.rewrite ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        'Rewrite'
+                      )}
+                    </button>
+                  </div>
+
+                  {/* Compare Section */}
+                  <div className="border-t border-slate-700/60 pt-4">
+                    <button
+                      onClick={handleCompare}
+                      disabled={loading.compare || !hasLetterContent}
+                      data-jaz-action="cover_compare_3"
+                      className="w-full rounded-full bg-slate-800 px-4 py-2.5 text-sm font-medium text-slate-200 border border-slate-600/70 hover:bg-slate-700 hover:border-slate-500 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading.compare ? (
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                      ) : (
+                        'Compare 3 AI Versions'
+                      )}
+                    </button>
+                    <p className="text-[10px] md:text-xs text-slate-400 mt-2">
+                      Generate and compare three different AI-written versions of your text.
+                    </p>
+                  </div>
                 </div>
               </div>
-            </Card>
+            )}
+
+            {/* Job Description & AI Tailoring Card - Only show in Letter Body tab */}
+            {activeTab === 'letter' && (
+              <div className="rounded-2xl border border-slate-700/60 bg-slate-950/70 shadow-[0_18px_40px_rgba(15,23,42,0.9)] backdrop-blur p-4 md:p-5">
+                <div className="space-y-4">
+                  <div>
+                    <h3 className="text-lg font-heading font-semibold text-slate-100 mb-1 flex items-center gap-2">
+                      <Sparkles className="w-5 h-5 text-violet-400" />
+                      Job Description & AI Tailoring
+                    </h3>
+                    <p className="text-[10px] md:text-xs text-slate-400 mb-4">
+                      Paste the job description here so we can tailor your cover letter to this role.
+                    </p>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    <div>
+                      <label className="block text-xs md:text-sm font-medium text-slate-200 mb-2">Job Description</label>
+                      <textarea
+                        placeholder="Paste the job description here so we can tailor your cover letter to this role..."
+                        className="w-full px-4 py-3 rounded-xl border border-slate-700/60 bg-slate-900/50 text-slate-100 placeholder:text-slate-500 min-h-[150px] focus:outline-none focus:ring-2 focus:ring-violet-500/50 focus:border-violet-500/50 transition resize-y"
+                        value={jobDescription}
+                        onChange={(e) => setJobDescription(e.target.value)}
+                      />
+                    </div>
+                    <button
+                      onClick={handleGenerateFromJobDescription}
+                      disabled={loading.tailorFromDescription || !jobDescription.trim()}
+                      data-jaz-action="cover_generate_from_jd"
+                      className="w-full rounded-full bg-violet-600 px-4 py-2.5 text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      {loading.tailorFromDescription ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Generating...
+                        </>
+                      ) : (
+                        <>
+                          <Sparkles className="w-4 h-4" />
+                          Generate from job description
+                        </>
+                      )}
+                    </button>
+                    <p className="text-[10px] md:text-xs text-slate-400">
+                      Generate or tailor your cover letter based on the full job description.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
-        </div>
-      </div>
+
+          {/* RIGHT: Preview + Export */}
+          <div className="space-y-6">
+            <div className="rounded-2xl border border-slate-700/60 bg-slate-950/70 shadow-[0_18px_40px_rgba(15,23,42,0.9)] backdrop-blur p-4 md:p-5 flex flex-col gap-3">
+              <div className="flex justify-between items-center">
+                <h2 className="text-sm font-semibold text-slate-100">Preview</h2>
+                <div className="flex gap-2">
+                  <button
+                    onClick={() => handleExport('pdf')}
+                    disabled={loading.export}
+                    className="rounded-full bg-violet-600 px-4 py-2 text-xs md:text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Download PDF"
+                  >
+                    {loading.export ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        PDF
+                      </>
+                    )}
+                  </button>
+                  <button
+                    onClick={() => handleExport('docx')}
+                    disabled={loading.export}
+                    className="rounded-full bg-violet-600 px-4 py-2 text-xs md:text-sm font-medium text-white border border-violet-400/70 shadow-[0_0_25px_rgba(139,92,246,0.7)] hover:bg-violet-500 hover:border-violet-300 transition flex items-center gap-2 disabled:opacity-50 disabled:cursor-not-allowed"
+                    aria-label="Download DOCX"
+                  >
+                    {loading.export ? (
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        DOCX
+                      </>
+                    )}
+                  </button>
+                </div>
+              </div>
+              {returnTo && (
+                <button
+                  onClick={() => {
+                    const decoded = decodeURIComponent(returnTo)
+                    const urlObj = new URL(decoded, window.location.origin)
+                    urlObj.searchParams.set('from', 'cover')
+                    router.push(urlObj.pathname + urlObj.search)
+                  }}
+                  className="w-full rounded-full bg-green-600/20 px-4 py-2 text-xs md:text-sm font-medium text-green-400 border border-green-500/50 hover:bg-green-600/30 transition"
+                >
+                  ✓ Return to Job Details
+                </button>
+              )}
+              <div className="mx-auto aspect-[1/1.414] w-full max-w-[460px] bg-white text-slate-900 shadow-lg overflow-hidden rounded-md">
+                <div 
+                  ref={previewRef} 
+                  id="cover-preview" 
+                  className="p-8 h-full overflow-y-auto"
+                >
+                  <CoverPreview aiPreview={aiPreview} />
+                </div>
+              </div>
+            </div>
+          </div>
+        </section>
+      </main>
 
       {/* Compare Panel */}
       {showCompare && variants.length > 0 && (
@@ -1205,7 +1312,9 @@ export default function CoverPage() {
             // Store variant in local preview state (preview only)
             // Variant content is already cleaned by API (body text only, no greetings/closings)
             const cleanedText = (variant.content || '').trim()
-            setAiPreview(cleanedText)
+            // Post-processing: remove any closing/signature blocks
+            const finalText = removeClosingSignature(cleanedText)
+            setAiPreview(finalText)
             setIsImprovePreview(false)
             setVariants([])
             setShowCompare(false)
@@ -1213,23 +1322,28 @@ export default function CoverPage() {
           }}
         />
       )}
-      
-      {/* Hard overlay + paywall when access is locked */}
-      {showPaywall && (
-        <>
+
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 animate-in slide-in-from-bottom-2">
           <div
-            className="fixed inset-0 z-30 bg-transparent"
-            onClick={(e) => e.preventDefault()}
-            onContextMenu={(e) => e.preventDefault()}
-          />
-          {paywallVariant && (
-            <PreviewPaywallModal
-              isOpen={true}
-              variant={paywallVariant}
-            />
-          )}
-        </>
+            className={cn(
+              'rounded-lg px-4 py-3 shadow-lg flex items-center gap-2',
+              toast.type === 'success'
+                ? 'bg-green-600/90 text-white'
+                : 'bg-red-600/90 text-white'
+            )}
+          >
+            {toast.type === 'success' ? (
+              <CheckCircle2 className="w-5 h-5" />
+            ) : (
+              <X className="w-5 h-5" />
+            )}
+            <span className="text-sm font-medium">{toast.message}</span>
+          </div>
+        </div>
       )}
     </div>
   )
 }
+

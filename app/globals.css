@@ -450,6 +450,51 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 /* When cv-description-has-bullets contains a cv-bullet-item block, use flexbox for perfect alignment */
+
+/* JAZ Pulse Highlight Effect - Enhanced Neon Glow */
+.jaz-pulse-highlight {
+  animation: jaz-pulse-neon 3s ease-in-out;
+  outline: 2px solid rgba(139, 92, 246, 0.8);
+  outline-offset: 3px;
+  border-radius: 0.5rem;
+  position: relative;
+  z-index: 10;
+}
+
+@keyframes jaz-pulse-neon {
+  0%, 100% {
+    outline-color: rgba(139, 92, 246, 0.6);
+    box-shadow: 
+      0 0 10px rgba(139, 92, 246, 0.4),
+      0 0 20px rgba(139, 92, 246, 0.3),
+      0 0 30px rgba(139, 92, 246, 0.2),
+      inset 0 0 10px rgba(139, 92, 246, 0.1);
+  }
+  25% {
+    outline-color: rgba(167, 139, 250, 0.9);
+    box-shadow: 
+      0 0 15px rgba(167, 139, 250, 0.6),
+      0 0 30px rgba(167, 139, 250, 0.4),
+      0 0 45px rgba(167, 139, 250, 0.3),
+      inset 0 0 15px rgba(167, 139, 250, 0.2);
+  }
+  50% {
+    outline-color: rgba(139, 92, 246, 1);
+    box-shadow: 
+      0 0 20px rgba(139, 92, 246, 0.8),
+      0 0 40px rgba(139, 92, 246, 0.6),
+      0 0 60px rgba(139, 92, 246, 0.4),
+      inset 0 0 20px rgba(139, 92, 246, 0.3);
+  }
+  75% {
+    outline-color: rgba(167, 139, 250, 0.9);
+    box-shadow: 
+      0 0 15px rgba(167, 139, 250, 0.6),
+      0 0 30px rgba(167, 139, 250, 0.4),
+      0 0 45px rgba(167, 139, 250, 0.3),
+      inset 0 0 15px rgba(167, 139, 250, 0.2);
+  }
+}
 .cv-description-has-bullets > .cv-bullet-item {
   line-height: 1.35; /* Consistent line height */
 }
@@ -514,12 +559,18 @@ h1, h2, h3, h4, h5, h6 {
 }
 
 .dark .ai-preview-text {
-  color: #ffffff; /* White text for readability on dark background - pure white */
+  color: #ffffff !important; /* White text for readability on dark background - pure white */
 }
 
 .dark .ai-preview-text .ai-preview-line,
 .dark .ai-preview-text .ai-preview-bullet-item {
-  color: #ffffff; /* Pure white */
+  color: #ffffff !important; /* Pure white */
+}
+
+.ai-preview-text,
+.ai-preview-text .ai-preview-line,
+.ai-preview-text .ai-preview-bullet-item {
+  color: #ffffff !important; /* Pure white for all preview text */
 }
 
 .ai-preview-line {
@@ -780,6 +831,16 @@ h1, h2, h3, h4, h5, h6 {
   min-height: 0;
 }
 
+/* Avatar animations for Interview Simulation */
+@keyframes avatar-speaking-bounce {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.04); }
+}
+
+.animate-avatar-speaking {
+  animation: avatar-speaking-bounce 0.9s ease-in-out infinite;
+}
+
 /* Cover Page - Theme Independent Container */
 .cover-page {
   background: transparent !important;
@@ -798,6 +859,20 @@ h1, h2, h3, h4, h5, h6 {
 .cover-page div,
 .cover-page span {
   color: #000000 !important;
+}
+
+/* Cover Letter Recipient Block - Fix word breaking */
+.cover-recipient-block {
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  hyphens: none !important;
+}
+
+.cover-recipient-line {
+  word-break: normal !important;
+  overflow-wrap: break-word !important;
+  hyphens: none !important;
+  white-space: normal !important;
 }
 
 /* Print styles for CV and Cover Letter */
@@ -1023,5 +1098,731 @@ h1, h2, h3, h4, h5, h6 {
     padding-bottom: 0.375rem !important; /* compact spacing */
     margin-top: 0 !important; /* No top margin - spacing handled by contact info margin-bottom */
     margin-bottom: 0.75rem !important;
+  }
+}
+
+/* Preview-only styles for CV Builder V2 - These do NOT affect PDF export */
+.preview-cv-container {
+  transition: box-shadow 0.3s ease;
+}
+
+/* Miniature PDF Preview - Scaled down to match PDF appearance */
+.cv-preview-miniature {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 142.86%; /* 100% / 0.7 - Full A4 size */
+  height: 142.86%; /* 100% / 0.7 - Full A4 size */
+  padding: 18mm 20mm;
+  box-sizing: border-box;
+  transform: scale(0.7);
+  transform-origin: top left;
+  overflow: hidden;
+  background: #ffffff !important;
+  color: #000000 !important;
+}
+
+/* Ensure all text in cv-preview-miniature is visible and black */
+.cv-preview-miniature,
+.cv-preview-miniature * {
+  color: #000000 !important;
+  -webkit-print-color-adjust: exact !important;
+  print-color-adjust: exact !important;
+}
+
+/* Force text visibility in preview templates */
+.cv-preview-miniature .cv-preview,
+.cv-preview-miniature .cv-preview * {
+  color: #000000 !important;
+}
+
+.cv-preview-miniature .cv-preview h1,
+.cv-preview-miniature .cv-preview h2,
+.cv-preview-miniature .cv-preview h3,
+.cv-preview-miniature .cv-preview h4,
+.cv-preview-miniature .cv-preview h5,
+.cv-preview-miniature .cv-preview h6 {
+  color: #000000 !important;
+}
+
+.cv-preview-miniature .cv-preview p,
+.cv-preview-miniature .cv-preview div,
+.cv-preview-miniature .cv-preview span,
+.cv-preview-miniature .cv-preview li,
+.cv-preview-miniature .cv-preview ul,
+.cv-preview-miniature .cv-preview ol {
+  color: #000000 !important;
+}
+
+/* When exporting to PDF, html2pdf will capture the element's actual size (before transform) */
+/* The transform is only for visual display in the preview */
+
+.preview-cv-content {
+  /* Ensure content fits without scrollbars */
+  display: flex;
+  flex-direction: column;
+}
+
+/* Preview-only spacing adjustments for better visual balance */
+/* These styles only apply to the on-screen preview, not the PDF export */
+.preview-cv-content .cv-preview section {
+  margin-top: 1.25rem !important;
+  margin-bottom: 1rem !important;
+}
+
+.preview-cv-content .cv-preview section:first-child {
+  margin-top: 0 !important;
+}
+
+.preview-cv-content .cv-preview section:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Improve readability in preview with slightly better line heights */
+.preview-cv-content .cv-preview p {
+  line-height: 1.65 !important;
+  margin-bottom: 0.4rem !important;
+}
+
+.preview-cv-content .cv-preview p:last-child {
+  margin-bottom: 0 !important;
+}
+
+.preview-cv-content .cv-preview ul {
+  line-height: 1.55 !important;
+}
+
+.preview-cv-content .cv-preview li {
+  line-height: 1.55 !important;
+  margin-bottom: 0.3rem !important;
+}
+
+.preview-cv-content .cv-preview li:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Better spacing for experience/education entries in preview */
+.preview-cv-content .cv-preview section > div {
+  margin-bottom: 1rem !important;
+}
+
+.preview-cv-content .cv-preview section > div:last-child {
+  margin-bottom: 0 !important;
+}
+
+/* Improve header spacing in preview */
+.preview-cv-content .cv-preview h2 {
+  margin-bottom: 0.75rem !important;
+}
+
+/* Ensure summary paragraphs have nice spacing */
+.preview-cv-content .cv-preview .space-y-2 > * + * {
+  margin-top: 0.5rem !important;
+}
+
+/* JAZ Guidance Highlight Effect - Pulse animation for scrolled elements */
+@keyframes jazPulse {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.02);
+  }
+}
+
+.jaz-highlight {
+  outline: 2px solid rgba(139, 92, 246, 0.8);
+  box-shadow: 0 0 0 6px rgba(139, 92, 246, 0.25), 0 0 22px rgba(139, 92, 246, 0.45);
+  border-radius: 9999px;
+  animation: jazPulse 1.2s ease-in-out infinite;
+  position: relative;
+  z-index: 10;
+}
+
+/* JAZ Button Glow Halo Animation */
+@keyframes jazGlowPulse {
+  0%, 100% {
+    opacity: 0.50;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.81;
+    transform: scale(1.08);
+  }
+}
+
+.jaz-button-glow-wrapper {
+  position: relative;
+  display: inline-block;
+  padding: 8px;
+  overflow: visible;
+}
+
+.jaz-button-glow-wrapper::before {
+  content: '';
+  position: absolute;
+  inset: -5px;
+  border-radius: 50%;
+  background: radial-gradient(circle, 
+    rgba(124, 58, 237, 0.73) 0%, 
+    rgba(139, 92, 246, 0.53) 30%,
+    rgba(99, 102, 241, 0.39) 50%,
+    rgba(167, 139, 250, 0.24) 70%, 
+    transparent 100%);
+  z-index: -1;
+  animation: jazGlowPulse 2.75s ease-in-out infinite;
+  pointer-events: none;
+  filter: contrast(1.4) brightness(1.12);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jaz-button-glow-wrapper::before {
+    animation: none;
+    opacity: 0.50;
+  }
+}
+
+/* JAZ Floating Orb Animations */
+@keyframes jaz-orb-breathe {
+  0%, 100% {
+    transform: scale(1);
+  }
+  50% {
+    transform: scale(1.05);
+  }
+}
+
+@keyframes jaz-orb-glow-pulse {
+  0%, 100% {
+    opacity: 0.5;
+    transform: scale(1);
+    filter: blur(12px);
+  }
+  50% {
+    opacity: 0.75;
+    transform: scale(1.05);
+    filter: blur(16px);
+  }
+}
+
+@keyframes jaz-orb-float {
+  0%, 100% {
+    transform: translateY(0px) translateX(0px);
+  }
+  33% {
+    transform: translateY(-8px) translateX(4px);
+  }
+  66% {
+    transform: translateY(-4px) translateX(-4px);
+  }
+}
+
+@keyframes jaz-orb-neural-ring-1 {
+  0% {
+    transform: rotate(0deg) scale(0.85);
+    opacity: 0.2;
+  }
+  50% {
+    opacity: 0.5;
+  }
+  100% {
+    transform: rotate(360deg) scale(1.25);
+    opacity: 0.2;
+  }
+}
+
+@keyframes jaz-orb-neural-ring-2 {
+  0% {
+    transform: rotate(0deg) scale(0.9);
+    opacity: 0.25;
+  }
+  50% {
+    opacity: 0.55;
+  }
+  100% {
+    transform: rotate(-360deg) scale(1.15);
+    opacity: 0.25;
+  }
+}
+
+
+/* JAZ Orb Container */
+.jaz-orb-container {
+  position: relative;
+  width: 80px;
+  height: 80px;
+}
+
+.jaz-orb-button {
+  position: relative;
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  background: linear-gradient(135deg, #0a1628 0%, #1a1f3a 50%, #0f1629 100%);
+  border: 1px solid rgba(139, 92, 246, 0.1);
+  cursor: pointer;
+  overflow: visible;
+  transition: transform 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+  animation: jaz-orb-breathe 4s ease-in-out infinite, jaz-orb-float 8s ease-in-out infinite;
+  box-shadow: 
+    0 0 20px rgba(139, 92, 246, 0.15),
+    inset 0 0 30px rgba(99, 102, 241, 0.05);
+}
+
+/* When welcome pulse is active, override normal animations */
+.jaz-orb-button.jaz-welcome-pulse {
+  animation: jaz-orb-welcome-pulse 1.2s ease-out;
+}
+
+/* After welcome pulse, return to normal idle animations */
+.jaz-orb-button:not(.jaz-welcome-pulse) {
+  animation: jaz-orb-breathe 4s ease-in-out infinite, jaz-orb-float 8s ease-in-out infinite;
+}
+
+.jaz-orb-button:hover {
+  transform: scale(1.1);
+  animation-play-state: paused;
+}
+
+.jaz-orb-button:active {
+  transform: scale(0.95);
+}
+
+/* Internal glow effect - soft circular glow around the eye */
+.jaz-orb-glow {
+  position: absolute;
+  inset: -4px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 50%, 
+    rgba(124, 58, 237, 0.25) 0%,
+    rgba(139, 92, 246, 0.2) 25%,
+    rgba(139, 92, 246, 0.15) 40%,
+    rgba(99, 102, 241, 0.1) 55%,
+    rgba(99, 102, 241, 0.05) 70%,
+    transparent 85%);
+  z-index: 1;
+  animation: jaz-orb-glow-pulse 3s ease-in-out infinite;
+  pointer-events: none;
+}
+
+/* Neural rings for active/thinking state - gentle expanding rings */
+.jaz-orb-neural-ring {
+  position: absolute;
+  inset: -12px;
+  border-radius: 50%;
+  border: 1px solid rgba(139, 92, 246, 0.25);
+  pointer-events: none;
+  z-index: 0;
+}
+
+.jaz-orb-neural-ring-1 {
+  animation: jaz-orb-neural-ring-1 6s linear infinite;
+  border-color: rgba(139, 92, 246, 0.3);
+}
+
+.jaz-orb-neural-ring-2 {
+  animation: jaz-orb-neural-ring-2 8s linear infinite;
+  border-color: rgba(99, 102, 241, 0.25);
+}
+
+/* JobAZ Eye - Large, clear, and dominant */
+.jaz-orb-eye {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 52px;
+  height: 52px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.jaz-orb-eye-image {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* Show neural rings when active/thinking */
+.jaz-orb-button.is-thinking .jaz-orb-neural-ring {
+  display: block;
+}
+
+/* Cursor-following light effect - subtle glow on hover */
+.jaz-orb-button::after {
+  content: '';
+  position: absolute;
+  width: 140px;
+  height: 140px;
+  border-radius: 50%;
+  background: radial-gradient(circle, rgba(139, 92, 246, 0.12) 0%, rgba(99, 102, 241, 0.06) 40%, transparent 70%);
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  transition: opacity 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+  pointer-events: none;
+  z-index: -2;
+}
+
+.jaz-orb-button:hover::after {
+  opacity: 1;
+}
+
+/* Additional halo effect - calm expanding ring */
+.jaz-orb-button::before {
+  content: '';
+  position: absolute;
+  inset: -20px;
+  border-radius: 50%;
+  border: 1px solid rgba(139, 92, 246, 0.08);
+  pointer-events: none;
+  z-index: -3;
+  animation: jaz-orb-halo-pulse 4s ease-in-out infinite;
+}
+
+@keyframes jaz-orb-halo-pulse {
+  0%, 100% {
+    transform: scale(1);
+    opacity: 0.3;
+  }
+  50% {
+    transform: scale(1.1);
+    opacity: 0.5;
+  }
+}
+
+/* JAZ Label - AI-Powered Effect */
+.jaz-label-container {
+  position: relative;
+  display: inline-block;
+  text-align: center;
+}
+
+.jaz-label-text {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 500;
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  background: linear-gradient(135deg, 
+    #C4B5FD 0%, 
+    #A78BFA 25%,
+    #8B5CF6 50%,
+    #7C3AED 75%,
+    #6366F1 100%);
+  background-clip: text;
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-size: 200% 200%;
+  animation: jaz-label-gradient-shift 4s ease-in-out infinite, jaz-label-glow-pulse 3s ease-in-out infinite;
+  position: relative;
+  z-index: 1;
+  filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4)) drop-shadow(0 0 4px rgba(167, 139, 250, 0.3));
+}
+
+@keyframes jaz-label-gradient-shift {
+  0%, 100% {
+    background-position: 0% 50%;
+  }
+  50% {
+    background-position: 100% 50%;
+  }
+}
+
+@keyframes jaz-label-glow-pulse {
+  0%, 100% {
+    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4)) drop-shadow(0 0 4px rgba(167, 139, 250, 0.3));
+  }
+  50% {
+    filter: drop-shadow(0 0 12px rgba(139, 92, 246, 0.6)) drop-shadow(0 0 6px rgba(167, 139, 250, 0.5)) drop-shadow(0 0 2px rgba(99, 102, 241, 0.4));
+  }
+}
+
+/* Sparkles animation */
+.jaz-label-sparkles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+}
+
+.jaz-sparkle {
+  position: absolute;
+  font-size: 0.5rem;
+  opacity: 0;
+  animation: jaz-sparkle-float 4s ease-in-out infinite;
+  color: rgba(139, 92, 246, 0.7);
+  text-shadow: 
+    0 0 3px rgba(139, 92, 246, 0.5),
+    0 0 6px rgba(99, 102, 241, 0.4),
+    0 0 9px rgba(167, 139, 250, 0.3);
+  filter: drop-shadow(0 0 2px rgba(139, 92, 246, 0.6));
+}
+
+.jaz-sparkle-1 {
+  top: -8px;
+  left: 20%;
+  animation-delay: 0s;
+}
+
+.jaz-sparkle-2 {
+  top: -6px;
+  right: 25%;
+  animation-delay: 1.3s;
+}
+
+.jaz-sparkle-3 {
+  bottom: -8px;
+  left: 50%;
+  transform: translateX(-50%);
+  animation-delay: 2.6s;
+}
+
+@keyframes jaz-sparkle-float {
+  0%, 100% {
+    opacity: 0;
+    transform: translateY(0) scale(0.8);
+  }
+  20% {
+    opacity: 0.5;
+    transform: translateY(-4px) scale(1);
+  }
+  40% {
+    opacity: 0.65;
+    transform: translateY(-6px) scale(1.1);
+  }
+  60% {
+    opacity: 0.5;
+    transform: translateY(-4px) scale(1);
+  }
+  80% {
+    opacity: 0.3;
+    transform: translateY(-2px) scale(0.9);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jaz-label-text {
+    animation: none;
+    background-position: 0% 50%;
+    filter: drop-shadow(0 0 8px rgba(139, 92, 246, 0.4));
+  }
+  
+  .jaz-sparkle {
+    animation: none;
+    opacity: 0;
+  }
+}
+
+/* Glassmorphism Chat Panel */
+.jaz-chat-panel {
+  background: rgba(13, 13, 13, 0.75);
+  backdrop-filter: blur(20px) saturate(180%);
+  -webkit-backdrop-filter: blur(20px) saturate(180%);
+  border: 1px solid rgba(139, 92, 246, 0.2);
+  box-shadow: 
+    0 20px 60px rgba(0, 0, 0, 0.5),
+    0 0 0 1px rgba(139, 92, 246, 0.15),
+    0 0 40px rgba(124, 58, 237, 0.1),
+    inset 0 0 60px rgba(139, 92, 246, 0.03);
+  border-radius: 24px;
+}
+
+.jaz-chat-panel::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  border-radius: 24px;
+  padding: 1px;
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.3), rgba(99, 102, 241, 0.1), rgba(139, 92, 246, 0.3));
+  -webkit-mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+  z-index: -1;
+}
+
+/* JAZ Message Bubble - Purple Gradient */
+.jaz-message-bubble {
+  background: linear-gradient(135deg, rgba(124, 58, 237, 0.9) 0%, rgba(139, 92, 246, 0.85) 50%, rgba(167, 139, 250, 0.8) 100%);
+  box-shadow: 
+    0 4px 12px rgba(124, 58, 237, 0.3),
+    0 0 20px rgba(139, 92, 246, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.1);
+  color: #ffffff;
+  border: 1px solid rgba(167, 139, 250, 0.3);
+}
+
+/* User Message Bubble - Dark Navy */
+.jaz-user-message-bubble {
+  background: linear-gradient(135deg, #0a1628 0%, #1a1f3a 50%, #0f1629 100%);
+  box-shadow: 
+    0 4px 12px rgba(0, 0, 0, 0.3),
+    0 0 20px rgba(0, 0, 0, 0.2),
+    inset 0 1px 0 rgba(255, 255, 255, 0.05);
+  color: #EAEAEA;
+  border: 1px solid rgba(139, 92, 246, 0.15);
+}
+
+/* Listening state - intensify glow */
+.jaz-orb-button.is-listening .jaz-orb-glow {
+  animation-duration: 1.5s;
+  opacity: 0.85;
+}
+
+
+/* AI Dashboard Strip Animations */
+@keyframes dash {
+  0% {
+    stroke-dashoffset: 0;
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.7;
+  }
+  100% {
+    stroke-dashoffset: -157;
+    opacity: 0.5;
+  }
+}
+
+/* CV Quality ring: slow pulse every 6-8s */
+@keyframes cv-quality-pulse {
+  0%, 100% {
+    opacity: 0.5;
+    filter: drop-shadow(0 0 4px rgba(139, 92, 246, 0.5));
+  }
+  50% {
+    opacity: 0.8;
+    filter: drop-shadow(0 0 6px rgba(139, 92, 246, 0.7));
+  }
+}
+
+/* Job Match bars: continuous rise/fall animation - calm, infinite loop */
+@keyframes pulse-sparkline {
+  0%, 100% {
+    transform: scaleY(1);
+    opacity: 0.75;
+  }
+  25% {
+    transform: scaleY(0.5);
+    opacity: 0.85;
+  }
+  50% {
+    transform: scaleY(0.3);
+    opacity: 0.9;
+  }
+  75% {
+    transform: scaleY(0.7);
+    opacity: 0.8;
+  }
+}
+
+/* Interview Ready dots: slow sequential fill loop */
+@keyframes dot-fill {
+  0%, 33.33% {
+    opacity: 0.4;
+    transform: scale(0.9);
+    background-color: rgba(139, 92, 246, 0.4);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1);
+    background-color: rgba(139, 92, 246, 0.7);
+  }
+  66.66%, 100% {
+    opacity: 1;
+    transform: scale(1.05);
+    background-color: rgba(139, 92, 246, 0.9);
+  }
+}
+
+/* Premium CTA hover glow effect */
+@keyframes cta-glow-sweep {
+  0% {
+    background-position: -100% 0;
+  }
+  100% {
+    background-position: 200% 0;
+  }
+}
+
+.cta-premium-glow {
+  position: relative;
+  overflow: hidden;
+}
+
+.cta-premium-glow::before {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: -100%;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    rgba(255, 255, 255, 0.15),
+    transparent
+  );
+  transition: left 0.6s ease;
+}
+
+.cta-premium-glow:hover::before {
+  left: 100%;
+}
+
+.cta-premium-glow:hover {
+  box-shadow: 
+    0 0 20px rgba(139, 92, 246, 0.5),
+    0 0 40px rgba(139, 92, 246, 0.3),
+    0 0 60px rgba(139, 92, 246, 0.2);
+}
+
+/* JAZ Orb welcome pulse - runs once on first load */
+@keyframes jaz-orb-welcome-pulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 
+      0 0 20px rgba(139, 92, 246, 0.15),
+      inset 0 0 30px rgba(99, 102, 241, 0.05);
+  }
+  50% {
+    transform: scale(1.15);
+    box-shadow: 
+      0 0 40px rgba(139, 92, 246, 0.4),
+      0 0 60px rgba(139, 92, 246, 0.2),
+      inset 0 0 30px rgba(99, 102, 241, 0.1);
+  }
+  100% {
+    transform: scale(1);
+    box-shadow: 
+      0 0 20px rgba(139, 92, 246, 0.15),
+      inset 0 0 30px rgba(99, 102, 241, 0.05);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .jaz-orb-button,
+  .jaz-orb-glow,
+  .jaz-orb-neural-ring,
+  .jaz-orb-eye,
+  .jaz-orb-eye-image {
+    animation: none !important;
+  }
+  
+  .jaz-orb-button:hover {
+    transform: scale(1.05);
+  }
+  
+  /* Disable dashboard animations for reduced motion */
+  [style*="animation: dash"],
+  [style*="animation: pulse-sparkline"],
+  [style*="animation: dot-fill"] {
+    animation: none !important;
   }
 }

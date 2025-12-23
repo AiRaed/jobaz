@@ -1,7 +1,7 @@
 import type { Metadata } from 'next'
 
 export const metadata: Metadata = {
-  title: 'AI CV Generator Pro — Cover Letter',
+  title: 'JobAZ – CV, Jobs & Interview Training',
   description: 'Generate personalized Cover Letters that match your CV style.',
 }
 

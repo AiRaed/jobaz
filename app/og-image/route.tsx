@@ -25,7 +25,7 @@ export async function GET() {
             marginBottom: 20,
           }}
         >
-          AI CV Generator Pro
+          JobAZ
         </div>
         <div
           style={{

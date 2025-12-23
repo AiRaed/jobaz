@@ -64,7 +64,7 @@ export default function CancelPage() {
             <RotateCcw className="w-5 h-5 mr-2" />
             Try again
           </Button>
-          <Link href="/builder">
+          <Link href="/cv-builder-v2">
             <Button size="lg" variant="ghost" className="w-full sm:w-auto">
               <ArrowLeft className="w-5 h-5 mr-2" />
               Back to Builder

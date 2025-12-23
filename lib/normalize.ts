@@ -339,6 +339,136 @@ export function cleanCoverLetterText(text: string, applicantName: string): strin
 }
 
 /**
+ * Clean cover letter text from Job Details page:
+ * - Removes "Tailored cover letter for..." heading
+ * - Returns clean letter text that can be displayed or saved
+ * Note: Does not remove "Dear Hiring Manager," - the Preview component handles duplicate prevention
+ */
+export function cleanJobDetailsCoverLetter(text: string): string {
+  if (!text || text.trim().length === 0) {
+    return text
+  }
+
+  let cleaned = text.trim()
+
+  // Remove "Tailored cover letter for..." heading (case-insensitive)
+  // This pattern matches the heading line and any following blank lines
+  cleaned = cleaned.replace(/^Tailored\s+cover\s+letter\s+for\s+.*?:\s*\n?\n?/i, '')
+
+  // Clean up extra blank lines
+  cleaned = cleaned.replace(/\n{3,}/g, '\n\n').trim()
+
+  return cleaned
+}
+
+/**
+ * Remove titles and honorifics (Mr, Ms, Mrs, MR, etc.) from a name.
+ * 
+ * @param name - The name that may contain titles
+ * @returns The name without any titles/honorifics
+ */
+export function removeTitleFromName(name: string): string {
+  if (!name || name.trim().length === 0) {
+    return name
+  }
+
+  let cleaned = name.trim()
+
+  // List of common titles/honorifics (case-insensitive matching)
+  // Patterns to match: "MR", "Mr", "Mr.", "Ms", "Ms.", "Mrs", "Mrs.", "Miss", "Dr", "Dr.", "Prof", "Prof.", etc.
+  const titlePatterns = [
+    /^(?:MR|Mr|Mr\.|MS|Ms|Ms\.|MRS|Mrs|Mrs\.|Miss|MISS|DR|Dr|Dr\.|PROF|Prof|Prof\.|PROFESSOR|Professor)\s+/i,
+  ]
+
+  // Remove title prefixes
+  for (const pattern of titlePatterns) {
+    cleaned = cleaned.replace(pattern, '')
+  }
+
+  // Also handle titles in ALL CAPS format like "MR RAED MAHFOUD"
+  cleaned = cleaned.replace(/^(MR|MS|MRS|DR|PROF)\s+/i, '')
+
+  // Clean up extra spaces and normalize capitalization
+  cleaned = cleaned.trim().replace(/\s+/g, ' ')
+
+  // Capitalize properly: First letter of each word
+  if (cleaned.length > 0) {
+    cleaned = cleaned
+      .split(' ')
+      .map(word => {
+        if (word.length === 0) return word
+        return word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+      })
+      .join(' ')
+  }
+
+  return cleaned
+}
+
+/**
+ * Clean cover letter closing section to avoid duplicate sign-offs.
+ * Removes duplicate "Sincerely" blocks, replaces placeholders like [Your Name],
+ * and ensures only one clean closing exists.
+ * 
+ * @param text - The cover letter text to clean
+ * @param userName - The user's full name to use in the signature (will be cleaned to remove titles)
+ * @returns Cleaned cover letter text with a single closing
+ */
+export function cleanCoverLetterClosing(text: string, userName: string): string {
+  if (!text) return ""
+
+  let cleaned = text
+
+  // Remove titles from the user name before using it in the signature
+  const cleanUserName = removeTitleFromName(userName)
+
+  // Normalize line endings
+  cleaned = cleaned.replace(/\r\n/g, "\n")
+
+  // First, remove any titles from names that appear after "Sincerely," in the existing text
+  // This handles cases where AI generated text with titles like "MR RAED MAHFOUD"
+  // Match patterns like "Sincerely,\nMR RAED MAHFOUD" or "Sincerely,\nMr. John Doe"
+  // Match "Sincerely," followed by newline and then a name (words with letters)
+  cleaned = cleaned.replace(/Sincerely,?\s*\n\s*([A-Za-z][A-Za-z\s]*[A-Za-z]|[A-Za-z]+)/g, (match, namePart) => {
+    // Remove the title from the name part
+    const nameWithoutTitle = removeTitleFromName(namePart.trim())
+    return "Sincerely,\n" + nameWithoutTitle
+  })
+
+  // 1) Remove duplicate closings such as repeated "Sincerely" blocks
+  // Match patterns like "Sincerely,\n[Your Name]" or "Sincerely,\nYour Name" repeated multiple times
+  cleaned = cleaned.replace(
+    /(Sincerely,?\s*\n\s*(?:\[?Your Name\]?|Your Name|[\w\s]+)[\s\n]*){2,}/gi,
+    "Sincerely,\n" + cleanUserName + "\n"
+  )
+
+  // 2) If the text contains placeholders like [Your Name], replace them with cleaned name
+  cleaned = cleaned.replace(/\[?Your Name\]?/gi, cleanUserName)
+
+  // 3) Remove any trailing repeated "Sincerely" lines and normalize to single closing
+  // Match "Sincerely," followed by name (with various formats) at the end
+  const closingPattern = /\s*(Sincerely,?\s*\n\s*(?:\[?Your Name\]?|Your Name|[\w\s]+))[\s\n]*$/i
+  if (closingPattern.test(cleaned)) {
+    // Replace any existing closing with a clean one (remove titles from existing names)
+    cleaned = cleaned.replace(closingPattern, (match) => {
+      // Extract the name part and clean it
+      const nameMatch = match.match(/Sincerely,?\s*\n\s*(.+?)[\s\n]*$/i)
+      if (nameMatch && nameMatch[1]) {
+        const existingName = nameMatch[1].trim()
+        const cleanedExistingName = removeTitleFromName(existingName)
+        return "\n\nSincerely,\n" + cleanedExistingName
+      }
+      return "\n\nSincerely,\n" + cleanUserName
+    })
+  } else {
+    // 4) If the text does NOT contain "Sincerely" at all, append a clean closing
+    cleaned = cleaned.trim() + "\n\nSincerely,\n" + cleanUserName
+  }
+
+  return cleaned.trim()
+}
+
+/**
  * Normalize experience bullets:
  * - Convert lines starting with "- " to proper bullets
  * - Remove leading/trailing blank lines
