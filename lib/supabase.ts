@@ -1,17 +1,17 @@
 import { createClient } from '@supabase/supabase-js'
 import { createBrowserClient } from '@supabase/ssr'
 
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!
-const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('Missing Supabase environment variables')
-}
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || ''
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || ''
 
 // Client-side Supabase client (for use in client components)
 // Use createBrowserClient from @supabase/ssr for proper cookie handling
 // Note: This should only be used in client components ('use client')
-export const supabase = createBrowserClient(supabaseUrl, supabaseAnonKey)
+// If env vars are missing, create a dummy client to prevent crashes
+// The app should handle missing Supabase gracefully
+export const supabase = supabaseUrl && supabaseAnonKey
+  ? createBrowserClient(supabaseUrl, supabaseAnonKey)
+  : createBrowserClient('https://placeholder.supabase.co', 'placeholder-key')
 
 /**
  * Creates a server-side Supabase client with service role key for admin operations.

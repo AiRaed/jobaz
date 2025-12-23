@@ -163,9 +163,22 @@ export async function GET(
 
     // Fetch from the appropriate provider
     if (parsed.provider === 'reed') {
-      const reedJob = await fetchReedJobById(parsed.rawId)
-      if (reedJob) {
-        job = normalizeReedJobForDetails(reedJob, parsed.fullId)
+      try {
+        const reedJob = await fetchReedJobById(parsed.rawId)
+        if (reedJob) {
+          job = normalizeReedJobForDetails(reedJob, parsed.fullId)
+        }
+      } catch (error) {
+        // If it's a missing config error, return a more helpful message
+        if (error instanceof Error && error.message.includes('Missing Reed API config')) {
+          console.error('Reed API not configured. Please set REED_API_KEY in environment variables.')
+          return NextResponse.json(
+            { error: 'Reed API not configured. Please contact support.' },
+            { status: 503 }
+          )
+        }
+        // For other errors, log and continue to try mock jobs
+        console.error(`Error fetching Reed job ${parsed.rawId}:`, error)
       }
     } else if (parsed.provider === 'adzuna') {
       try {
@@ -174,9 +187,16 @@ export async function GET(
           job = normalizeAdzunaJobForDetails(adzunaJob, parsed.fullId)
         }
       } catch (error) {
+        // If it's a missing config error, return a more helpful message
+        if (error instanceof Error && error.message.includes('Missing Adzuna API credentials')) {
+          console.error('Adzuna API not configured. Please set ADZUNA_APP_ID and ADZUNA_APP_KEY in environment variables.')
+          return NextResponse.json(
+            { error: 'Adzuna API not configured. Please contact support.' },
+            { status: 503 }
+          )
+        }
+        // For other errors, log and continue to try mock jobs
         console.error(`Error fetching Adzuna job ${parsed.rawId}:`, error)
-        // Re-throw to be handled by error handler below
-        throw error
       }
     }
 

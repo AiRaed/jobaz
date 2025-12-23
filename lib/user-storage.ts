@@ -15,15 +15,30 @@ let cachedUserId: string | null = null
 export function initUserStorageCache() {
   if (typeof window === 'undefined') return
   
-  // Get initial user ID
-  supabase.auth.getUser().then(({ data: { user } }) => {
-    cachedUserId = user?.id || null
-  })
+  // Check if Supabase is properly configured before using it
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY
   
-  // Listen for auth state changes
-  supabase.auth.onAuthStateChange((_event, session) => {
-    cachedUserId = session?.user?.id || null
-  })
+  if (!supabaseUrl || !supabaseAnonKey) {
+    console.warn('[user-storage] Supabase not configured, skipping user cache initialization')
+    return
+  }
+  
+  try {
+    // Get initial user ID
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      cachedUserId = user?.id || null
+    }).catch((error) => {
+      console.error('[user-storage] Error getting user:', error)
+    })
+    
+    // Listen for auth state changes
+    supabase.auth.onAuthStateChange((_event, session) => {
+      cachedUserId = session?.user?.id || null
+    })
+  } catch (error) {
+    console.error('[user-storage] Error initializing user cache:', error)
+  }
 }
 
 /**
