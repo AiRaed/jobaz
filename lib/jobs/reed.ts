@@ -61,7 +61,8 @@ export async function fetchReedJobs(
     const response = await fetch(url.toString(), {
       method: 'GET',
       headers: {
-        Authorization: 'Basic ' + Buffer.from(apiKey + ':').toString('base64'),
+        // Reed API uses API KEY ONLY (no username/password, no colon)
+        Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
         'Content-Type': 'application/json',
       },
     })

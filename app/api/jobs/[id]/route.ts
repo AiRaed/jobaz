@@ -18,7 +18,8 @@ async function fetchReedJobById(rawId: string) {
   const url = `${base}/jobs/${rawId}`
   const response = await fetch(url, {
     headers: {
-      Authorization: 'Basic ' + Buffer.from(apiKey + ':').toString('base64'),
+      // Reed API uses API KEY ONLY (no username/password, no colon)
+      Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
     },
   })
 
@@ -26,7 +27,13 @@ async function fetchReedJobById(rawId: string) {
     if (response.status === 404) {
       return null
     }
-    throw new Error(`Reed API error: ${response.status} ${response.statusText}`)
+    if (response.status === 400) {
+      const errorText = await response.text().catch(() => 'Bad Request')
+      console.error('Reed API 400 error:', errorText)
+      throw new Error(`Reed API error: Bad Request - ${errorText}`)
+    }
+    const errorText = await response.text().catch(() => response.statusText)
+    throw new Error(`Reed API error: ${response.status} ${response.statusText} - ${errorText}`)
   }
 
   return await response.json()
@@ -177,8 +184,26 @@ export async function GET(
             { status: 503 }
           )
         }
-        // For other errors, log and continue to try mock jobs
-        console.error(`Error fetching Reed job ${parsed.rawId}:`, error)
+        // If it's a 400 or 404 error, return appropriate status
+        if (error instanceof Error && error.message.includes('Reed API error')) {
+          if (error.message.includes('404') || error.message.includes('not found')) {
+            // Continue to try mock jobs for 404
+            console.error(`Reed job not found: ${parsed.rawId}`)
+          } else if (error.message.includes('400') || error.message.includes('Bad Request')) {
+            // Return 400 error for bad requests
+            console.error(`Reed API 400 error for job ${parsed.rawId}:`, error.message)
+            return NextResponse.json(
+              { error: 'Reed API error: Bad Request', details: error.message },
+              { status: 400 }
+            )
+          } else {
+            // For other API errors, log and continue to try mock jobs
+            console.error(`Error fetching Reed job ${parsed.rawId}:`, error)
+          }
+        } else {
+          // For other errors, log and continue to try mock jobs
+          console.error(`Error fetching Reed job ${parsed.rawId}:`, error)
+        }
       }
     } else if (parsed.provider === 'adzuna') {
       try {
