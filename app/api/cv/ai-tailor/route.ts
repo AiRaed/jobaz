@@ -1,16 +1,45 @@
 import { NextResponse } from 'next/server'
 import OpenAI from 'openai'
 
+export const dynamic = 'force-dynamic'
+export const maxDuration = 30
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY || '',
 })
 
+function stripHtmlTags(html: string): string {
+  if (!html) return ''
+  return html
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/&nbsp;/g, ' ')
+    .replace(/&amp;/g, '&')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function truncateText(text: string, maxLength: number = 8000): string {
+  if (!text || text.length <= maxLength) return text
+  return text.substring(0, maxLength) + '...'
+}
+
 export async function POST(req: Request) {
   try {
     const body = await req.json()
-    const { mode, jobDescription, currentSummary, experience, currentSkills, personalInfo } = body
+    let { mode, jobDescription, currentSummary, experience, currentSkills, personalInfo } = body
 
     if (!jobDescription || !jobDescription.trim()) {
+      return NextResponse.json({ ok: false, error: 'Job description is required' }, { status: 400 })
+    }
+
+    jobDescription = stripHtmlTags(jobDescription)
+    jobDescription = truncateText(jobDescription, 8000)
+
+    if (!jobDescription.trim()) {
       return NextResponse.json({ ok: false, error: 'Job description is required' }, { status: 400 })
     }
 
@@ -28,6 +57,9 @@ export async function POST(req: Request) {
 
     switch (mode) {
       case 'analyze': {
+        const cleanedJobDescription = stripHtmlTags(jobDescription)
+        const truncatedJobDescription = truncateText(cleanedJobDescription, 8000)
+        
         const completion = await openai.chat.completions.create({
           model: 'gpt-4-turbo-preview',
           messages: [
@@ -50,7 +82,7 @@ Return your response as JSON with this structure:
 }
 
 Job description:
-${jobDescription}`,
+${truncatedJobDescription}`,
             },
           ],
           temperature: 0.3,
@@ -86,9 +118,13 @@ ${jobDescription}`,
       }
 
       case 'summary': {
-        if (!currentSummary) {
+        if (!currentSummary || !currentSummary.trim()) {
           return NextResponse.json({ ok: false, error: 'Current summary is required' }, { status: 400 })
         }
+
+        const cleanedJobDescription = stripHtmlTags(jobDescription)
+        const truncatedJobDescription = truncateText(cleanedJobDescription, 8000)
+        const cleanedSummary = currentSummary.trim().substring(0, 2000)
 
         const completion = await openai.chat.completions.create({
           model: 'gpt-4-turbo-preview',
@@ -107,10 +143,10 @@ ${jobDescription}`,
               content: `Tailor this CV summary to match the job description below. Emphasize relevant skills and experiences.
 
 Current summary:
-${currentSummary}
+${cleanedSummary}
 
 Job description:
-${jobDescription}
+${truncatedJobDescription}
 
 ${currentSkills && currentSkills.length > 0 ? `Current skills: ${currentSkills.join(', ')}` : ''}
 
@@ -134,6 +170,9 @@ Return only the tailored summary text.`,
           return NextResponse.json({ ok: false, error: 'Experience is required' }, { status: 400 })
         }
 
+        const cleanedJobDescription = stripHtmlTags(jobDescription)
+        const truncatedJobDescription = truncateText(cleanedJobDescription, 8000)
+
         const completion = await openai.chat.completions.create({
           model: 'gpt-4-turbo-preview',
           messages: [
@@ -149,7 +188,7 @@ Current experience:
 ${JSON.stringify(experience, null, 2)}
 
 Job description:
-${jobDescription}
+${truncatedJobDescription}
 
 Return the tailored experience array as JSON with the same structure. Keep all original data (id, jobTitle, company, location, startDate, endDate, isCurrent) but reorder entries by relevance and enhance bullets to match the job. Each entry must have a bullets array.`,
             },
@@ -196,6 +235,9 @@ Return the tailored experience array as JSON with the same structure. Keep all o
       }
 
       case 'skills': {
+        const cleanedJobDescription = stripHtmlTags(jobDescription)
+        const truncatedJobDescription = truncateText(cleanedJobDescription, 8000)
+
         const completion = await openai.chat.completions.create({
           model: 'gpt-4-turbo-preview',
           messages: [
@@ -208,7 +250,7 @@ Return the tailored experience array as JSON with the same structure. Keep all o
               content: `Based on this job description, suggest 5-10 skills that should be added to a CV. Return them as a JSON array of strings.
 
 ${currentSkills && currentSkills.length > 0 ? `Current skills (don't suggest duplicates): ${currentSkills.join(', ')}\n\n` : ''}Job description:
-${jobDescription}
+${truncatedJobDescription}
 
 Return only a JSON array like: ["skill1", "skill2", ...]`,
             },

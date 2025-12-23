@@ -1127,10 +1127,30 @@ export default function JobDetailsPage() {
 
     try {
       // Get job description from Reed job or fallback to description field
-      const jobDescription = (job as any)?._reedJob?.fullDescription || 
-                            (job as any)?._reedJob?.jobDescription || 
-                            job.description || 
-                            ''
+      let jobDescription = (job as any)?._reedJob?.fullDescription || 
+                          (job as any)?._reedJob?.jobDescription || 
+                          job.description || 
+                          ''
+
+      if (!jobDescription.trim()) {
+        setCvTailorMessage('Job description not available. Cannot tailor CV.')
+        setIsTailoringCv(false)
+        stopLoading(requestId)
+        return
+      }
+
+      // Strip HTML tags and clean the description
+      jobDescription = jobDescription
+        .replace(/<[^>]+>/g, ' ')
+        .replace(/&nbsp;/g, ' ')
+        .replace(/&amp;/g, '&')
+        .replace(/&lt;/g, '<')
+        .replace(/&gt;/g, '>')
+        .replace(/&quot;/g, '"')
+        .replace(/&#39;/g, "'")
+        .replace(/\s+/g, ' ')
+        .trim()
+        .substring(0, 8000)
 
       if (!jobDescription.trim()) {
         setCvTailorMessage('Job description not available. Cannot tailor CV.')
@@ -1151,6 +1171,12 @@ export default function JobDetailsPage() {
           currentSummary: cvSummary,
         }),
       })
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => 'Unknown error')
+        console.error('API error:', response.status, errorText)
+        throw new Error(`API error: ${response.status}`)
+      }
 
       const data = await response.json()
 
@@ -1193,10 +1219,8 @@ export default function JobDetailsPage() {
       }
     } catch (error) {
       console.error('Error tailoring CV:', error)
-      // Only show error if we didn't get any content
-      if (!cvSummary || cvSummary.trim().length === 0) {
-        setCvTailorMessage('An error occurred. Please try again.')
-      }
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error'
+      setCvTailorMessage(`Failed to tailor CV: ${errorMessage}. Please try again.`)
     } finally {
       setIsTailoringCv(false)
       stopLoading(requestId)
