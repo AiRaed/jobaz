@@ -125,10 +125,9 @@ export async function GET(req: NextRequest) {
       const url = `${base}/jobs/${rawId}`
       console.log('[Reed] Fetching job:', { provider: 'reed', rawId, url })
 
-      // Reed fetch must use: Authorization: Basic ${Buffer.from(REED_API_KEY + ":").toString("base64")}
       const response = await fetch(url, {
         headers: {
-          Authorization: 'Basic ' + Buffer.from(apiKey + ':').toString('base64'),
+          Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
         },
       })
 
