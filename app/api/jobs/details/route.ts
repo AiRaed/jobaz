@@ -45,8 +45,9 @@ export async function GET(req: NextRequest) {
       let apiBase = process.env.ADZUNA_API_BASE || 'https://api.adzuna.com/v1/api'
 
       if (!appId || !appKey) {
+        console.error('[Adzuna] Missing API credentials')
         return NextResponse.json(
-          { error: 'Missing Adzuna API config' },
+          { error: 'Missing Adzuna API config. Please set ADZUNA_APP_ID and ADZUNA_APP_KEY environment variables.' },
           { status: 500 }
         )
       }
@@ -115,15 +116,15 @@ export async function GET(req: NextRequest) {
       const base = process.env.REED_API_BASE || 'https://www.reed.co.uk/api/1.0'
 
       if (!apiKey) {
+        console.error('[Reed] Missing API key')
         return NextResponse.json(
-          { error: 'Missing Reed API config' },
+          { error: 'Missing Reed API config. Please set REED_API_KEY environment variable.' },
           { status: 500 }
         )
       }
 
-      // Reed fetch must call: ${REED_API_BASE}/jobs/${rawId}
       const url = `${base}/jobs/${rawId}`
-      console.log('[Reed] Fetching job:', { provider: 'reed', rawId, url })
+      console.log('[Reed] Fetching job:', { provider: 'reed', rawId, url: url.replace(/\/\/[^\/]+@/, '//***@') })
 
       const response = await fetch(url, {
         headers: {
