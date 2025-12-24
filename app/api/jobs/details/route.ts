@@ -45,9 +45,8 @@ export async function GET(req: NextRequest) {
       let apiBase = process.env.ADZUNA_API_BASE || 'https://api.adzuna.com/v1/api'
 
       if (!appId || !appKey) {
-        console.error('[Adzuna] Missing API credentials')
         return NextResponse.json(
-          { error: 'Missing Adzuna API config. Please set ADZUNA_APP_ID and ADZUNA_APP_KEY environment variables.' },
+          { error: 'Missing Adzuna API config' },
           { status: 500 }
         )
       }
@@ -116,19 +115,20 @@ export async function GET(req: NextRequest) {
       const base = process.env.REED_API_BASE || 'https://www.reed.co.uk/api/1.0'
 
       if (!apiKey) {
-        console.error('[Reed] Missing API key')
         return NextResponse.json(
-          { error: 'Missing Reed API config. Please set REED_API_KEY environment variable.' },
+          { error: 'Missing Reed API config' },
           { status: 500 }
         )
       }
 
+      // Reed fetch must call: ${REED_API_BASE}/jobs/${rawId}
       const url = `${base}/jobs/${rawId}`
-      console.log('[Reed] Fetching job:', { provider: 'reed', rawId, url: url.replace(/\/\/[^\/]+@/, '//***@') })
+      console.log('[Reed] Fetching job:', { provider: 'reed', rawId, url })
 
+      // Reed fetch must use: Authorization: Basic ${Buffer.from(REED_API_KEY + ":").toString("base64")}
       const response = await fetch(url, {
         headers: {
-          Authorization: 'Basic ' + Buffer.from(apiKey).toString('base64'),
+          Authorization: 'Basic ' + Buffer.from(apiKey + ':').toString('base64'),
         },
       })
 
